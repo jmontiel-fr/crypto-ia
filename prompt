@@ -1,0 +1,64 @@
+I want to build a private SaaS service for crypto market analysis and prediction.
+
+The service uses a collector that build a crypocurrencies hitsotry of values in $,
+for each hour, strating from a day defined in a .env configuration file.
+
+The storage must be in a Postgresql DB.
+The collector is launched manually or on on schedule with paarameters in .env
+When scheduled it looks at data avaialable and start to enrich the data as long as data is available.
+The collector first proceeds from yesterday and go back until start date 
+defined in .env , then it enrich data from  last date recorded to most recent data untl data is available.
+
+The collector tracks the n highest captalized cryptos. This value is in defined in .env.
+
+The service has a deep learning engine and providse an API to define for
+- getting the best 20 most performing cryptos for a next period of 24 hours
+- getting the tendency of current market (a list of tendencies is to define)
+
+The service will alo have a genAI engine and a friendly wbeUI similar to chatGPT that allows to question on market analysis:
+- a fresh zone of Q&A (questions are limited to crypto market and technology)
+- keep the history of questions (limited to 3)
+Security: All the interactions with OepnAI must be kept anonumous and never expose personal data or enterprise information. Any question must be analysed for detection g personal data and the quesiton rejected!
+
+The service has an alert system that schelu market every hour based on the last info collected. This service sends emerging sms to a phone configured in .env.in case of massive market shift (increase or decrease).
+
+The solution is technically based on Python, Flask, SQLAlchemy, HTML5/CSS with Bootsrap5, and use Open source and free tools. The SaaS service will be hosted on AWS.
+For data: Binance free API.
+For genAI service and predicitive ML: Streamlit, LSTM/GRU networks, and OpenAI API (model: gpt-4o-mini by default defined in .env).
+
+
+Build the solution with kiro spec. 
+Generate documentation:
+DEVELOPMENT-GUIDE.md including OpenAI registration process
+DEPLOYMENT-GUIDE.md 
+USER-GUIDE.md including costs
+SECURITY&CONFORMANCE-GUIDE.md
+
+
+--------------
+In requirements & design add:
+
+Create a terraform/ folder to create in an existing AWS account :
+an Amamazonlinux2023 t3.micro instance to host the solution, 
+in a public subnet, 
+with a SG limiting access ports 22 and HTTPs from the dev workstation IP sour
+with SSM and inconnect access,
+an EIP.
+
+make a clear separation betwenn local scripts (deployment and control of remote AWS platform components, and the remote-scipts used by the remote application.
+
+For postgresql, in AWS: install it on the EC2.
+
+Create also a local environment using an external Postgresql local Postgresl.
+Use .env to locate the databes parametres ( so there will be a local-env. and an aws-env. In aws, tehre will be the possibility to use later an RDS-Postgresl service (but as an evolution).
+
+The url to use:
+crypto-ai.local:10443 for local webapp
+cryto-aoi.crypto-vision.com for AWS
+
+Certificates : use self-signed certificates for both sites.
+
+Questions:
+- which ML technology and tools do you recommend for building the API
+- which technology you suggest for the genAI webUI service
+- if the SaaS is exposed to public: does the provider requires specific aggreements or licnesing in France and Europe ? (CASP licensing?) - in that case are there turnarounds to escape them, may be limiting perimeter of action.

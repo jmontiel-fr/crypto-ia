@@ -1,0 +1,69 @@
+# =============================================================================
+# AWS Production Environment Configuration
+# =============================================================================
+# Copy this file to 'aws-env' on your EC2 instance and fill in actual values
+# =============================================================================
+
+# Environment
+ENVIRONMENT=production
+
+# Database (PostgreSQL on EC2)
+DATABASE_URL=postgresql://crypto_user:CHANGE_ME@localhost:5432/crypto_db
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+
+# Web UI
+WEB_UI_HOST=crypto-ai.crypto-vision.com
+WEB_UI_PORT=443
+WEB_UI_PROTOCOL=https
+
+# SSL Certificate
+SSL_CERT_PATH=/etc/ssl/certs/crypto-ai-cert.pem
+SSL_KEY_PATH=/etc/ssl/private/crypto-ai-key.pem
+
+# Data Collection
+COLLECTION_START_DATE=2024-01-01
+TOP_N_CRYPTOS=50
+COLLECTION_SCHEDULE=0 */6 * * *
+BINANCE_API_KEY=your_binance_key
+BINANCE_API_SECRET=your_binance_secret
+
+# Prediction Engine
+MODEL_TYPE=LSTM
+PREDICTION_HORIZON_HOURS=24
+MODEL_RETRAIN_SCHEDULE=0 2 * * 0
+SEQUENCE_LENGTH=168
+
+# GenAI
+OPENAI_API_KEY=your_openai_key
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_MAX_TOKENS=500
+OPENAI_TEMPERATURE=0.7
+
+# Alert System
+ALERT_ENABLED=true
+ALERT_THRESHOLD_PERCENT=10.0
+ALERT_COOLDOWN_HOURS=4
+SMS_PROVIDER=aws_sns
+SMS_PHONE_NUMBER=+1234567890
+AWS_SNS_TOPIC_ARN=arn:aws:sns:us-east-1:123456789012:crypto-alerts
+
+# API
+API_HOST=0.0.0.0
+API_PORT=5000
+API_KEY_REQUIRED=true
+RATE_LIMIT_PER_MINUTE=100
+
+# Streamlit
+STREAMLIT_PORT=8501
+
+# AWS
+AWS_REGION=us-east-1
+
+# Security
+SECRET_KEY=CHANGE_ME_TO_RANDOM_SECRET_KEY
+ALLOWED_ORIGINS=https://crypto-ai.crypto-vision.com
+
+# Logging
+LOG_LEVEL=INFO
+LOG_FILE=/var/log/crypto-saas/app.log
