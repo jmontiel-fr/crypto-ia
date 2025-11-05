@@ -176,3 +176,4 @@ This document specifies the requirements for a private SaaS service that provide
 2. THE system SHALL include a DEPLOYMENT-GUIDE.md document that covers AWS deployment procedures using Terraform
 3. THE system SHALL include a USER-GUIDE.md document that covers system usage and cost estimates
 4. THE system SHALL include a SECURITY-CONFORMANCE-GUIDE.md document that covers security practices and compliance considerations
+5. THE system SHALL include a REST-API-GUIDE.md document that covers all API endpoints with request/response examples and authentication details

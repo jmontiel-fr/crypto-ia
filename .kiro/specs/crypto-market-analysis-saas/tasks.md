@@ -418,7 +418,9 @@
     - Add CSRF token validation for forms
     - _Requirements: 8.3, 8.5_
   
-  - [ ] 10.4 Implement comprehensive audit logging
+  - [x] 10.4 Implement comprehensive audit logging
+
+
 
 
 
@@ -534,7 +536,10 @@
     - Add logs command to tail application logs
     - _Requirements: 11.8_
 
+
 - [ ] 13. Implement remote application scripts
+
+
 
   - [ ] 13.1 Create dependency installation script
 
@@ -557,6 +562,8 @@
     - Create crypto_db database and crypto_user
     - Configure PostgreSQL for local connections
     - Run database migrations to create schema
+
+
     - _Requirements: 11.6, 12.3_
   
   - [ ] 13.3 Create application setup script
@@ -564,23 +571,33 @@
     - Create Python virtual environment
     - Install Python dependencies from requirements.txt
     - Copy aws-env to .env and configure database connection
+
+
     - Set up systemd service files for Flask, Streamlit, and schedulers
+
     - Configure Nginx as reverse proxy for HTTPS
     - Install and configure self-signed SSL certificate
     - _Requirements: 11.8, 11.10, 11.11_
+
+
   
   - [ ] 13.4 Implement service control scripts
     - Write remote-scripts/start-services.sh to start all services
     - Write remote-scripts/stop-services.sh to stop all services
     - Write remote-scripts/restart-services.sh to restart services
+
+
     - Add health check logic to verify services are running
     - _Requirements: 11.8_
+
+
   
   - [ ] 13.5 Create database backup script
     - Write remote-scripts/backup-database.sh for PostgreSQL backups
     - Use pg_dump to create database backups
     - Compress backups and store with timestamp
     - Implement backup rotation (keep last 7 days)
+
     - Add option to upload backups to S3 (future enhancement)
     - _Requirements: 11.6_
 
@@ -588,11 +605,15 @@
 
   - [ ] 14.1 Create local environment template
     - Write local-env.example with all required variables
+
+
     - Set database URL for local PostgreSQL
     - Configure crypto-ai.local:10443 as Web UI URL
     - Set appropriate defaults for local development
     - Add comments explaining each variable
     - _Requirements: 12.1, 12.4, 12.5_
+
+
   
   - [ ] 14.2 Create AWS environment template
     - Write aws-env.example with all required variables
@@ -730,6 +751,17 @@
     - Add incident response procedures
     - Document secrets management best practices
     - _Requirements: 13.4_
+  
+  - [ ] 18.5 Create REST-API-GUIDE.md
+    - Document all API endpoints with full specifications
+    - Include authentication and authorization requirements
+    - Provide request/response examples for each endpoint
+    - Document error codes and error handling
+    - Include rate limiting information
+    - Add curl examples for testing endpoints
+    - Document API versioning strategy
+    - Include pagination details where applicable
+    - _Requirements: 13.5_
 
 - [ ] 19. Wire everything together and create entry points
 
