@@ -1,0 +1,178 @@
+# =============================================================================
+# Local Development Environment Configuration - PostgreSQL Version
+# =============================================================================
+# This configuration uses PostgreSQL for production-like local development
+# Requires PostgreSQL installation but provides full feature compatibility
+#
+# To use this configuration:
+#   1. Install PostgreSQL: See docs/LOCAL-DEPLOYMENT-GUIDE.md
+#   2. Create database and user (see setup instructions below)
+#   3. Copy this file: cp local-env.postgresql.example local-env
+#   4. Update database credentials and API keys
+#   5. Run: python start.py --all
+#
+# For quick testing with SQLite (no database install), see: local-env.sqlite.example
+# =============================================================================
+
+# Environment
+ENVIRONMENT=local
+
+# Deployment Path (where the application is deployed)
+# Local: C:\crypto-ia (Windows) or /home/user/crypto-ia (Linux/macOS)
+# AWS: /opt/crypto-ia
+# Leave empty to use current directory
+ENVIRONMENT_PATH=C:\crypto-ia
+
+# Database (PostgreSQL - Production-like setup)
+# Update with your PostgreSQL credentials
+DATABASE_URL=postgresql://crypto_user:crypto_pass@localhost:5432/crypto_db
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=10
+
+# Web UI
+WEB_UI_HOST=crypto-ai.local
+WEB_UI_PORT=10443
+WEB_UI_PROTOCOL=https
+
+# SSL Certificate
+SSL_CERT_PATH=./certs/local/cert.pem
+SSL_KEY_PATH=./certs/local/key.pem
+
+# Data Collection
+COLLECTION_START_DATE=2024-01-01
+TOP_N_CRYPTOS=50
+COLLECTION_SCHEDULE=0 */6 * * *  # Every 6 hours
+BINANCE_API_KEY=your_binance_key_here
+BINANCE_API_SECRET=your_binance_secret_here
+
+# Prediction Engine
+MODEL_TYPE=LSTM  # or GRU
+PREDICTION_HORIZON_HOURS=24
+MODEL_RETRAIN_SCHEDULE=0 2 * * 0  # Weekly on Sunday at 2 AM
+SEQUENCE_LENGTH=168  # 7 days of hourly data
+
+# GenAI (REQUIRED - Get your key from https://platform.openai.com/api-keys)
+OPENAI_API_KEY=your_openai_key_here
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_MAX_TOKENS=500
+OPENAI_TEMPERATURE=0.7
+
+# Alert System
+ALERT_ENABLED=true
+ALERT_THRESHOLD_PERCENT=10.0
+ALERT_COOLDOWN_HOURS=4
+SMS_PROVIDER=twilio  # or aws_sns
+SMS_PHONE_NUMBER=+1234567890
+TWILIO_ACCOUNT_SID=your_twilio_sid_here
+TWILIO_AUTH_TOKEN=your_twilio_token_here
+TWILIO_FROM_NUMBER=+1234567890
+
+# API
+API_HOST=0.0.0.0
+API_PORT=5000
+API_KEY_REQUIRED=false  # Disabled for local dev
+RATE_LIMIT_PER_MINUTE=100
+
+# Streamlit
+STREAMLIT_PORT=8501
+
+# Security
+SECRET_KEY=local_dev_secret_key_change_in_production
+ALLOWED_ORIGINS=https://crypto-ai.local:10443
+
+# Logging
+LOG_LEVEL=DEBUG
+LOG_FILE=logs/crypto_saas.log
+
+# Log Retention
+AUDIT_LOGS_RETENTION_DAYS=90
+CHAT_HISTORY_RETENTION_DAYS=30
+QUERY_AUDIT_LOGS_RETENTION_DAYS=365
+SYSTEM_LOGS_RETENTION_DAYS=30
+LOG_RETENTION_SCHEDULE=0 2 * * *  # Daily at 2 AM
+
+# Development Options
+DEBUG=true
+FLASK_ENV=development
+TESTING=false
+
+# Optional: AWS Configuration (for future features)
+# AWS_REGION=us-east-1
+# AWS_ACCESS_KEY_ID=your_aws_access_key
+# AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+
+# Optional: Additional Binance Settings
+# BINANCE_TESTNET=false
+# BINANCE_RATE_LIMIT_REQUESTS_PER_MINUTE=1200
+
+# Optional: Model Training Settings
+# MODEL_SAVE_PATH=./models
+# MODEL_BACKUP_ENABLED=true
+# MODEL_VALIDATION_SPLIT=0.2
+
+# Optional: Advanced Security Settings
+# ENABLE_RATE_LIMITING=true
+# ENABLE_REQUEST_LOGGING=true
+# ENABLE_CORS=true
+# CORS_ORIGINS=https://crypto-ai.local:10443
+
+# Optional: Performance Settings
+# WORKER_PROCESSES=1
+# WORKER_THREADS=4
+# WORKER_TIMEOUT=30
+
+# Optional: Monitoring Settings
+# ENABLE_METRICS=true
+# METRICS_PORT=9090
+# HEALTH_CHECK_ENABLED=true
+
+# =============================================================================
+# POSTGRESQL SETUP INSTRUCTIONS
+# =============================================================================
+# 
+# Windows:
+# --------
+# 1. Download PostgreSQL: https://www.postgresql.org/download/windows/
+# 2. Install and remember the postgres user password
+# 3. Open pgAdmin or psql and run:
+#
+#    CREATE DATABASE crypto_db;
+#    CREATE USER crypto_user WITH PASSWORD 'crypto_pass';
+#    GRANT ALL PRIVILEGES ON DATABASE crypto_db TO crypto_user;
+#
+# 4. Update DATABASE_URL above with your credentials
+#
+# Linux/macOS:
+# ------------
+# 1. Install PostgreSQL:
+#    Ubuntu/Debian: sudo apt install postgresql postgresql-contrib
+#    macOS: brew install postgresql
+#
+# 2. Start PostgreSQL:
+#    Ubuntu/Debian: sudo systemctl start postgresql
+#    macOS: brew services start postgresql
+#
+# 3. Create database and user:
+#    sudo -u postgres psql
+#    CREATE DATABASE crypto_db;
+#    CREATE USER crypto_user WITH PASSWORD 'crypto_pass';
+#    GRANT ALL PRIVILEGES ON DATABASE crypto_db TO crypto_user;
+#    \q
+#
+# 4. Update DATABASE_URL above with your credentials
+#
+# =============================================================================
+# QUICK START GUIDE
+# =============================================================================
+# 1. Setup PostgreSQL (see instructions above)
+# 2. Get OpenAI API Key: https://platform.openai.com/api-keys
+# 3. Update DATABASE_URL and OPENAI_API_KEY in this file
+# 4. Copy to local-env: cp local-env.postgresql.example local-env
+# 5. Install dependencies: pip install -r requirements.txt
+# 6. Run migrations: alembic upgrade head
+# 7. Run: python start.py --all
+# 8. Access:
+#    - API: http://localhost:5000/api/health
+#    - Dashboard: http://localhost:8501
+#
+# =============================================================================

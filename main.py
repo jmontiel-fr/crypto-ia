@@ -85,7 +85,16 @@ class ApplicationStartup:
     def _setup_logging(self) -> None:
         """Setup application logging."""
         try:
-            setup_logging()
+            # Get environment path from environment variable if available
+            env_path = os.getenv('ENVIRONMENT_PATH')
+            log_level = os.getenv('LOG_LEVEL', 'INFO')
+            log_file = os.getenv('LOG_FILE', 'logs/crypto_saas.log')
+            
+            setup_logging(
+                log_level=log_level,
+                log_file=log_file,
+                base_path=env_path
+            )
             logger.info("Logging system initialized")
         except Exception as e:
             print(f"Failed to setup logging: {e}")
@@ -184,6 +193,9 @@ class ApplicationStartup:
     def _validate_directories(self) -> bool:
         """Validate and create required directories."""
         try:
+            # Determine base path from environment configuration
+            base_path = Path(self.config.environment_path) if self.config.environment_path else Path.cwd()
+            
             directories = [
                 "logs",
                 "certs",
@@ -192,12 +204,14 @@ class ApplicationStartup:
             ]
             
             for directory in directories:
-                dir_path = Path(directory)
+                dir_path = base_path / directory
                 if not dir_path.exists():
                     dir_path.mkdir(parents=True, exist_ok=True)
-                    logger.info(f"Created directory: {directory}")
+                    logger.info(f"Created directory: {dir_path}")
+                else:
+                    logger.debug(f"Directory exists: {dir_path}")
             
-            logger.info("Directory structure validated")
+            logger.info(f"Directory structure validated at: {base_path}")
             return True
         except Exception as e:
             logger.error(f"Failed to validate directories: {e}")
@@ -210,6 +224,7 @@ class ApplicationStartup:
         logger.info("Crypto Market Analysis SaaS - Startup Complete")
         logger.info("=" * 60)
         logger.info(f"Environment: {self.config.environment}")
+        logger.info(f"Deployment Path: {self.config.environment_path or 'Current directory'}")
         logger.info(f"Database URL: {self.config.database_url.split('@')[1] if '@' in self.config.database_url else 'configured'}")
         logger.info(f"Web UI: {self.config.web_ui_protocol}://{self.config.web_ui_host}:{self.config.web_ui_port}")
         logger.info(f"API Port: {self.config.api_port}")

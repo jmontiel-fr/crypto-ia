@@ -17,7 +17,7 @@ SERVICES=(
     "crypto-saas-collector"
     "crypto-saas-dashboard"
     "crypto-saas-api"
-    "postgresql"
+    "postgresql-crypto"
 )
 
 # Logging functions
@@ -103,7 +103,7 @@ main() {
         fi
         
         # Wait for critical services to stop
-        if [[ "$service" == "crypto-saas-api" || "$service" == "postgresql" ]]; then
+        if [[ "$service" == "crypto-saas-api" || "$service" == "postgresql-crypto" ]]; then
             wait_for_stop "$service"
         fi
     done

@@ -52,6 +52,13 @@ class CollectionResult:
     time_range_end: datetime
     duration_seconds: float
     error_message: Optional[str] = None
+    status: str = "complete"  # complete, partial, failed, skipped
+    missing_ranges: List[tuple] = None
+    retry_count: int = 0
+    
+    def __post_init__(self):
+        if self.missing_ranges is None:
+            self.missing_ranges = []
 
 
 class CryptoCollector:
@@ -69,7 +76,8 @@ class CryptoCollector:
         self,
         binance_client: BinanceClient,
         top_n_cryptos: int = 50,
-        batch_size_hours: int = 720  # 30 days
+        batch_size_hours: int = 720,  # 30 days
+        max_retries: int = 3
     ):
         """
         Initialize crypto collector.
@@ -78,10 +86,12 @@ class CryptoCollector:
             binance_client: Binance API client instance.
             top_n_cryptos: Number of top cryptocurrencies to track.
             batch_size_hours: Hours of data to fetch per batch.
+            max_retries: Maximum retry attempts for failed batches.
         """
         self.binance_client = binance_client
         self.top_n_cryptos = top_n_cryptos
         self.batch_size_hours = batch_size_hours
+        self.max_retries = max_retries
         
         # Progress tracking
         self.current_progress: Optional[CollectionProgress] = None
@@ -89,7 +99,8 @@ class CryptoCollector:
         
         logger.info(
             f"CryptoCollector initialized: "
-            f"top_n={top_n_cryptos}, batch_size={batch_size_hours}h"
+            f"top_n={top_n_cryptos}, batch_size={batch_size_hours}h, "
+            f"max_retries={max_retries}"
         )
     
     def get_tracked_cryptocurrencies(self) -> List[str]:
@@ -282,6 +293,54 @@ class CryptoCollector:
         
         return results
     
+    def _get_missing_ranges(
+        self,
+        crypto_id: int,
+        start_time: datetime,
+        end_time: datetime
+    ) -> List[tuple]:
+        """
+        Get missing date ranges for a cryptocurrency.
+        
+        Args:
+            crypto_id: Cryptocurrency ID
+            start_time: Start of desired range
+            end_time: End of desired range
+        
+        Returns:
+            List of (start, end) tuples for missing data
+        """
+        with session_scope() as session:
+            price_repo = PriceHistoryRepository(session)
+            
+            # Get all existing timestamps
+            existing_timestamps = price_repo.get_timestamps_in_range(
+                crypto_id, start_time, end_time
+            )
+            
+            if not existing_timestamps:
+                # No data exists, return full range
+                return [(start_time, end_time)]
+            
+            # Find gaps
+            missing_ranges = []
+            current_time = start_time
+            
+            # Sort timestamps
+            existing_timestamps.sort()
+            
+            for timestamp in existing_timestamps:
+                # Check if there's a gap
+                if (timestamp - current_time) > timedelta(hours=1):
+                    missing_ranges.append((current_time, timestamp))
+                current_time = timestamp + timedelta(hours=1)
+            
+            # Check if there's a gap at the end
+            if (end_time - current_time) > timedelta(hours=1):
+                missing_ranges.append((current_time, end_time))
+            
+            return missing_ranges
+    
     def _collect_for_crypto(
         self,
         symbol: str,
@@ -290,7 +349,7 @@ class CryptoCollector:
         direction: str = "backward"
     ) -> CollectionResult:
         """
-        Collect data for a single cryptocurrency.
+        Collect data for a single cryptocurrency with smart resume.
         
         Args:
             symbol: Cryptocurrency symbol.
@@ -304,50 +363,120 @@ class CryptoCollector:
         collection_start = datetime.now()
         
         try:
-            # Fetch price data from Binance
-            trading_pair = f"{symbol}USDT"
-            price_data_list = self.binance_client.get_hourly_prices(
-                symbol=trading_pair,
-                start_time=start_time,
-                end_time=end_time
-            )
+            # Step 1: Check what data already exists
+            with session_scope() as session:
+                crypto_repo = CryptoRepository(session)
+                crypto = crypto_repo.get_or_create(symbol, symbol)
+                crypto_id = crypto.id
             
-            if not price_data_list:
+            # Get missing ranges
+            missing_ranges = self._get_missing_ranges(crypto_id, start_time, end_time)
+            
+            if not missing_ranges:
+                logger.info(f"{symbol}: All data already exists, skipping")
+                return CollectionResult(
+                    crypto_symbol=symbol,
+                    success=True,
+                    records_collected=0,
+                    time_range_start=start_time,
+                    time_range_end=end_time,
+                    duration_seconds=(datetime.now() - collection_start).total_seconds(),
+                    status="skipped"
+                )
+            
+            logger.info(f"{symbol}: Found {len(missing_ranges)} missing range(s)")
+            
+            # Step 2: Collect missing ranges with retry
+            total_records = 0
+            failed_ranges = []
+            
+            for range_start, range_end in missing_ranges:
+                retry_count = 0
+                success = False
+                
+                while retry_count <= self.max_retries and not success:
+                    try:
+                        # Fetch price data from Binance
+                        trading_pair = f"{symbol}USDT"
+                        price_data_list = self.binance_client.get_hourly_prices(
+                            symbol=trading_pair,
+                            start_time=range_start,
+                            end_time=range_end
+                        )
+                        
+                        if price_data_list:
+                            # Persist to database immediately
+                            records_saved = self._persist_price_data(symbol, price_data_list)
+                            total_records += records_saved
+                            success = True
+                            logger.debug(
+                                f"{symbol}: Collected {records_saved} records "
+                                f"for range {range_start} to {range_end}"
+                            )
+                        else:
+                            logger.warning(f"{symbol}: No data for range {range_start} to {range_end}")
+                            retry_count += 1
+                            
+                    except BinanceAPIError as e:
+                        retry_count += 1
+                        if retry_count <= self.max_retries:
+                            wait_time = 2 ** retry_count  # Exponential backoff
+                            logger.warning(
+                                f"{symbol}: API error (attempt {retry_count}/{self.max_retries}), "
+                                f"retrying in {wait_time}s: {e}"
+                            )
+                            import time
+                            time.sleep(wait_time)
+                        else:
+                            logger.error(f"{symbol}: Failed after {self.max_retries} retries: {e}")
+                            failed_ranges.append((range_start, range_end))
+                    
+                    except Exception as e:
+                        logger.error(f"{symbol}: Unexpected error: {e}")
+                        failed_ranges.append((range_start, range_end))
+                        break
+            
+            # Step 3: Determine result status
+            duration = (datetime.now() - collection_start).total_seconds()
+            
+            if not failed_ranges:
+                # Complete success
+                return CollectionResult(
+                    crypto_symbol=symbol,
+                    success=True,
+                    records_collected=total_records,
+                    time_range_start=start_time,
+                    time_range_end=end_time,
+                    duration_seconds=duration,
+                    status="complete"
+                )
+            elif total_records > 0:
+                # Partial success
+                return CollectionResult(
+                    crypto_symbol=symbol,
+                    success=True,
+                    records_collected=total_records,
+                    time_range_start=start_time,
+                    time_range_end=end_time,
+                    duration_seconds=duration,
+                    status="partial",
+                    missing_ranges=failed_ranges,
+                    error_message=f"{len(failed_ranges)} range(s) failed"
+                )
+            else:
+                # Complete failure
                 return CollectionResult(
                     crypto_symbol=symbol,
                     success=False,
                     records_collected=0,
                     time_range_start=start_time,
                     time_range_end=end_time,
-                    duration_seconds=(datetime.now() - collection_start).total_seconds(),
-                    error_message="No data returned from Binance API"
+                    duration_seconds=duration,
+                    status="failed",
+                    missing_ranges=failed_ranges,
+                    error_message="All ranges failed"
                 )
             
-            # Persist to database
-            records_saved = self._persist_price_data(symbol, price_data_list)
-            
-            duration = (datetime.now() - collection_start).total_seconds()
-            
-            return CollectionResult(
-                crypto_symbol=symbol,
-                success=True,
-                records_collected=records_saved,
-                time_range_start=start_time,
-                time_range_end=end_time,
-                duration_seconds=duration
-            )
-            
-        except BinanceAPIError as e:
-            logger.error(f"Binance API error for {symbol}: {e}")
-            return CollectionResult(
-                crypto_symbol=symbol,
-                success=False,
-                records_collected=0,
-                time_range_start=start_time,
-                time_range_end=end_time,
-                duration_seconds=(datetime.now() - collection_start).total_seconds(),
-                error_message=f"Binance API error: {str(e)}"
-            )
         except Exception as e:
             logger.error(f"Unexpected error collecting {symbol}: {e}")
             return CollectionResult(
@@ -357,6 +486,7 @@ class CryptoCollector:
                 time_range_start=start_time,
                 time_range_end=end_time,
                 duration_seconds=(datetime.now() - collection_start).total_seconds(),
+                status="failed",
                 error_message=f"Unexpected error: {str(e)}"
             )
     
@@ -473,7 +603,7 @@ class CryptoCollector:
     
     def get_collection_status(self) -> Dict[str, Any]:
         """
-        Get current collection status.
+        Get current collection status with detailed progress.
         
         Returns:
             Dictionary with status information.
@@ -483,6 +613,8 @@ class CryptoCollector:
             "total_collections": len(self.collection_results),
             "successful_collections": sum(1 for r in self.collection_results if r.success),
             "failed_collections": sum(1 for r in self.collection_results if not r.success),
+            "partial_collections": sum(1 for r in self.collection_results if r.status == "partial"),
+            "skipped_collections": sum(1 for r in self.collection_results if r.status == "skipped"),
             "total_records_collected": sum(r.records_collected for r in self.collection_results)
         }
         
@@ -493,6 +625,19 @@ class CryptoCollector:
                 "collected_hours": self.current_progress.collected_hours,
                 "total_hours": self.current_progress.total_hours
             }
+        
+        # Add detailed results
+        if self.collection_results:
+            status["recent_results"] = [
+                {
+                    "symbol": r.crypto_symbol,
+                    "status": r.status,
+                    "records": r.records_collected,
+                    "duration": round(r.duration_seconds, 2),
+                    "error": r.error_message
+                }
+                for r in self.collection_results[-10:]  # Last 10 results
+            ]
         
         return status
     
@@ -511,8 +656,10 @@ class CryptoCollector:
         if not results:
             return
         
-        successful = sum(1 for r in results if r.success)
-        failed = sum(1 for r in results if not r.success)
+        complete = sum(1 for r in results if r.status == "complete")
+        partial = sum(1 for r in results if r.status == "partial")
+        failed = sum(1 for r in results if r.status == "failed")
+        skipped = sum(1 for r in results if r.status == "skipped")
         total_records = sum(r.records_collected for r in results)
         total_duration = sum(r.duration_seconds for r in results)
         
@@ -521,9 +668,22 @@ class CryptoCollector:
             f"Collection Summary ({collection_type})\n"
             f"{'='*60}\n"
             f"Total cryptocurrencies: {len(results)}\n"
-            f"Successful: {successful}\n"
+            f"Complete: {complete}\n"
+            f"Partial: {partial}\n"
             f"Failed: {failed}\n"
+            f"Skipped (already collected): {skipped}\n"
             f"Total records collected: {total_records}\n"
             f"Total duration: {total_duration:.1f}s\n"
+            f"Average per crypto: {total_duration/len(results):.1f}s\n"
             f"{'='*60}"
         )
+        
+        # Log failed/partial cryptos for retry
+        if partial > 0 or failed > 0:
+            logger.warning("\nCryptos needing attention:")
+            for r in results:
+                if r.status in ["partial", "failed"]:
+                    logger.warning(
+                        f"  - {r.crypto_symbol}: {r.status} "
+                        f"({r.records_collected} records, {r.error_message})"
+                    )

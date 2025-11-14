@@ -959,3 +959,261 @@ When reporting API issues, include:
 **Last Updated**: November 2025  
 **API Version**: 1.0.0  
 **Documentation Version**: 1.0.0
+
+          f"(confidence: {pred['confidence']:.2f})")
+
+# Get market tendency
+response = requests.get(
+    f"{BASE_URL}/api/market/tendency",
+    headers=headers
+)
+tendency = response.json()
+print(f"Market is {tendency['tendency']} (confidence: {tendency['confidence']:.2f})")
+
+# Ask a chat question
+response = requests.post(
+    f"{BASE_URL}/api/chat/query",
+    headers=headers,
+    json={
+        "question": "What factors influence Bitcoin price?",
+        "session_id": "user-session-123"
+    }
+)
+chat_response = response.json()
+if chat_response["success"]:
+    print(f"Answer: {chat_response['answer']}")
+```
+
+### JavaScript/Node.js
+
+```javascript
+const axios = require('axios');
+
+const API_KEY = 'your_api_key';
+const BASE_URL = 'http://localhost:5000';
+
+const headers = {
+    'Authorization': `Bearer ${API_KEY}`,
+    'Content-Type': 'application/json'
+};
+
+// Get top 20 predictions
+async function getTopPredictions() {
+    try {
+        const response = await axios.get(
+            `${BASE_URL}/api/predictions/top20`,
+            { headers }
+        );
+        
+        console.log('Top Predictions:');
+        response.data.predictions.forEach(pred => {
+            console.log(`${pred.symbol}: ${pred.predicted_change_percent.toFixed(2)}%`);
+        });
+    } catch (error) {
+        console.error('Error:', error.response?.data || error.message);
+    }
+}
+
+// Ask a chat question
+async function askQuestion(question, sessionId) {
+    try {
+        const response = await axios.post(
+            `${BASE_URL}/api/chat/query`,
+            {
+                question: question,
+                session_id: sessionId
+            },
+            { headers }
+        );
+        
+        if (response.data.success) {
+            console.log('Answer:', response.data.answer);
+            console.log('Cost:', `$${response.data.metadata.cost_usd.toFixed(6)}`);
+        } else {
+            console.log('Rejected:', response.data.rejection_reason);
+        }
+    } catch (error) {
+        console.error('Error:', error.response?.data || error.message);
+    }
+}
+
+// Run examples
+getTopPredictions();
+askQuestion('What are the best performing cryptos?', 'session-123');
+```
+
+### cURL Examples
+
+**Get Top 20 Predictions:**
+```bash
+curl -X GET \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  "http://localhost:5000/api/predictions/top20"
+```
+
+**Get Specific Crypto Prediction:**
+```bash
+curl -X GET \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  "http://localhost:5000/api/predictions/crypto/BTC"
+```
+
+**Get Market Tendency:**
+```bash
+curl -X GET \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  "http://localhost:5000/api/market/tendency"
+```
+
+**Get Market Tendency History:**
+```bash
+curl -X GET \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  "http://localhost:5000/api/market/tendency/history?days=7"
+```
+
+**Ask Chat Question:**
+```bash
+curl -X POST \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What factors influence Bitcoin price?",
+    "session_id": "user-123"
+  }' \
+  "http://localhost:5000/api/chat/query"
+```
+
+**Get Chat History:**
+```bash
+curl -X GET \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  "http://localhost:5000/api/chat/history/user-123?limit=10"
+```
+
+**Trigger Data Collection (Admin):**
+```bash
+curl -X POST \
+  -H "Authorization: Bearer YOUR_ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "manual",
+    "start_date": "2024-01-01",
+    "end_date": "2024-12-31"
+  }' \
+  "http://localhost:5000/api/admin/collect/trigger"
+```
+
+**Get Collection Status (Admin):**
+```bash
+curl -X GET \
+  -H "Authorization: Bearer YOUR_ADMIN_API_KEY" \
+  "http://localhost:5000/api/admin/collect/status"
+```
+
+## API Versioning
+
+The API currently uses version 1.0. Future versions will be accessible via URL path:
+
+- **Current**: `http://localhost:5000/api/...`
+- **Future v2**: `http://localhost:5000/api/v2/...`
+
+Version 1 will be maintained for backward compatibility.
+
+## Pagination
+
+Endpoints that return lists support pagination:
+
+```bash
+curl -H "Authorization: Bearer YOUR_API_KEY" \
+  "http://localhost:5000/api/market/tendency/history?page=1&per_page=20"
+```
+
+Response includes pagination metadata:
+```json
+{
+  "data": [...],
+  "pagination": {
+    "page": 1,
+    "per_page": 20,
+    "total": 100,
+    "pages": 5
+  }
+}
+```
+
+## Webhooks (Future Feature)
+
+Webhook support for real-time notifications is planned for future releases:
+
+- Market shift alerts
+- Prediction updates
+- System status changes
+
+## Support & Resources
+
+- **API Status**: Check `/health` endpoint
+- **Documentation**: See `src/api/API_DOCUMENTATION.md` for detailed specs
+- **Issues**: Report bugs via your issue tracking system
+- **Rate Limit Increases**: Contact your administrator
+
+## Security Best Practices
+
+1. **Never expose API keys**: Keep them secret and rotate regularly
+2. **Use HTTPS in production**: Always use encrypted connections
+3. **Validate responses**: Check status codes and error messages
+4. **Implement timeouts**: Set reasonable request timeouts
+5. **Log API usage**: Monitor for unusual patterns
+6. **Sanitize inputs**: Validate all data before sending to API
+
+## Troubleshooting
+
+### Common Issues
+
+**401 Unauthorized:**
+- Check API key is correct
+- Verify API key hasn't expired
+- Ensure Authorization header is properly formatted
+
+**429 Rate Limit Exceeded:**
+- Implement exponential backoff
+- Reduce request frequency
+- Contact admin for rate limit increase
+
+**500 Internal Server Error:**
+- Check API status at `/health`
+- Review request payload for errors
+- Contact support if issue persists
+
+**Chat Query Rejected:**
+- Ensure question is crypto-related
+- Remove any personal information
+- Check question length (max 1000 characters)
+
+### Debug Mode
+
+Enable verbose logging for troubleshooting:
+
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+# Your API calls here
+```
+
+## Changelog
+
+### Version 1.0.0 (2024-11-11)
+- Initial API release
+- Prediction endpoints
+- Market analysis endpoints
+- Chat interface
+- Admin endpoints
+- Authentication system
+- Rate limiting
+
+---
+
+**Last Updated**: 2024-11-11  
+**API Version**: 1.0.0  
+**Documentation Version**: 1.0.0

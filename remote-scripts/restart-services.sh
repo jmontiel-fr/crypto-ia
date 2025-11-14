@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 
 # Services to manage
 SERVICES=(
-    "postgresql"
+    "postgresql-crypto"
     "crypto-saas-api"
     "crypto-saas-dashboard"
     "crypto-saas-collector"
@@ -97,7 +97,7 @@ main() {
         fi
         
         # Wait for critical services to be ready
-        if [[ "$service" == "postgresql" || "$service" == "crypto-saas-api" ]]; then
+        if [[ "$service" == "postgresql-crypto" || "$service" == "crypto-saas-api" ]]; then
             wait_for_service "$service"
         fi
     done
@@ -118,6 +118,12 @@ main() {
     echo
     log_info "Service Status:"
     systemctl status "${SERVICES[@]}" --no-pager | grep -E "Active:|Loaded:" || true
+    
+    echo
+    log_info "To view logs:"
+    echo "  sudo journalctl -u crypto-saas-api -f"
+    echo "  sudo journalctl -u crypto-saas-dashboard -f"
+    echo "  sudo tail -f /var/log/crypto-saas/*.log"
 }
 
 # Run main function

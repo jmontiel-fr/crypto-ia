@@ -216,7 +216,11 @@ terraform output elastic_ip
 cd ..
 
 # Create AWS environment file
-cp aws-env.example aws-env
+# Option 1: EC2 with PostgreSQL (simpler, automated setup)
+cp aws-env.ec2.example aws-env
+
+# Option 2: EC2 with RDS (managed database, production)
+# cp aws-env.rds.example aws-env
 
 # Edit with your configuration
 nano aws-env

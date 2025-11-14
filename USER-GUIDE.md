@@ -33,25 +33,65 @@ The Crypto Market Analysis SaaS provides AI-powered cryptocurrency market analys
 
 ## Accessing the System
 
-### Local Development Environment
+The system consists of three independent web applications accessed through a landing page:
+
+### Landing Page
+
+**Purpose**: Unified entry point to access all system features
+
+**Local Development:**
+- URL: `http://www.crypto-vision.com` (or `http://localhost:80`)
+
+**AWS Production:**
+- URL: `http://www.crypto-vision.com`
+
+**Features:**
+- Simple, clean interface with two primary navigation buttons:
+  - **"View Dashboard"**: Opens the Streamlit dashboard for data visualization
+  - **"Chat Assistant"**: Opens the AI chat interface for natural language queries
+- Responsive design works on desktop, tablet, and mobile
+- Quick access to both main features without complex navigation
+
+### Application URLs
+
+**Local Development Environment:**
 
 If running locally:
-- **Main Application**: https://crypto-ai.local:10443
-- **Streamlit Dashboard**: http://localhost:8501
-- **API Base URL**: https://crypto-ai.local:10443/api
+- **Landing Page**: `http://www.crypto-vision.com` (or `http://localhost:80`)
+- **Streamlit Dashboard**: `http://localhost:8501`
+- **Chat Interface**: `https://crypto-ai.local:10443`
+- **API Base URL**: `https://crypto-ai.local:10443/api`
 
-### AWS Production Environment
+**AWS Production Environment:**
 
 If deployed to AWS:
-- **Main Application**: https://crypto-ai.your-domain.com
-- **Streamlit Dashboard**: https://crypto-ai.your-domain.com:8501
-- **API Base URL**: https://crypto-ai.your-domain.com/api
+- **Landing Page**: `http://www.crypto-vision.com`
+- **Streamlit Dashboard**: `http://www.crypto-vision.com:8501` (or `http://dashboard.crypto-vision.com`)
+- **Chat Interface**: `https://crypto-ai.crypto-vision.com:10443` (or `https://chat.crypto-vision.com`)
+- **API Base URL**: `https://crypto-ai.crypto-vision.com/api`
+
+### Navigation Flow
+
+1. **Start at Landing Page**: Visit `www.crypto-vision.com`
+2. **Choose Your Tool**:
+   - Click **"View Dashboard"** for charts, predictions, and analytics
+   - Click **"Chat Assistant"** for conversational AI queries
+3. **Switch Between Tools**: Use browser tabs or return to landing page
+
+### Architecture Notes
+
+- All three applications (Landing Page, Dashboard, Chat) are **independent**
+- Each runs on its own port with dedicated functionality
+- No tight integration - navigate via links/buttons
+- Can open multiple tabs for simultaneous access
+- Each application can be bookmarked separately
 
 ### Browser Requirements
 
-- **Modern Browser**: Chrome, Firefox, Safari, or Edge
-- **JavaScript Enabled**: Required for chat interface
+- **Modern Browser**: Chrome, Firefox, Safari, or Edge (latest versions)
+- **JavaScript Enabled**: Required for chat interface and interactive charts
 - **HTTPS Support**: All connections use SSL/TLS encryption
+- **Cookies**: Session management for chat history
 
 **Note**: Self-signed certificates will show security warnings in browsers. Click "Advanced" → "Proceed to site" to continue.
 
@@ -120,15 +160,43 @@ The dashboard has multiple pages accessible via the sidebar:
 ### Data Collection Page
 
 **System Status:**
-- Data collection progress
+- Real-time collection progress (per-crypto and overall)
+- Collection status: Complete, Partial, Failed, Skipped
 - Last update timestamps
-- Coverage statistics
-- Error reporting
+- Coverage statistics (100 cryptos tracked)
+- Detailed error reporting with retry counts
+
+**Collection Features:**
+- **Smart Resume**: Automatically continues from where it left off if interrupted
+- **No Duplicates**: Only fetches missing data ranges
+- **Automatic Retry**: Failed batches retry up to 3 times with exponential backoff
+- **Interruption-Safe**: Can stop/restart anytime without losing progress
 
 **Manual Controls:**
-- Trigger data collection
-- View collection logs
-- Check system health
+- **Trigger Collection**: Start backward, forward, or gap-fill collection
+- **Monitor Progress**: Real-time status updates via API
+- **View Results**: Detailed per-crypto results with status
+- **Check System Health**: Verify data completeness
+
+**Collection Modes:**
+- **Backward**: Collect historical data from start date to present
+- **Forward**: Update with latest data since last collection
+- **Gap Fill**: Detect and fill missing data ranges
+
+**API Usage:**
+```bash
+# Trigger historical collection (requires API key)
+curl -X POST http://localhost:5000/api/admin/collect/trigger \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "backward", "start_date": "2024-01-01T00:00:00Z"}'
+
+# Check collection status
+curl -H "X-API-Key: YOUR_KEY" \
+  http://localhost:5000/api/admin/collect/status
+```
+
+**See Also:** `docs/QUICK-START-COLLECTOR.md` for detailed collection guide
 
 ### Admin Audit Page
 
@@ -220,11 +288,41 @@ The REST API provides programmatic access to all system functionality.
 
 ### Authentication
 
-**Development**: No authentication required
-**Production**: API key required in header:
+**API Key Authentication**: Enabled for admin endpoints.
+
+**Public Endpoints** (no key required):
+- `GET /api/health` - Health check
+- `GET /api/predictions/top20` - Top predictions
+- `GET /api/market/tendency` - Market tendency
+- `POST /api/chat/query` - Chat queries
+
+**Admin Endpoints** (API key required):
+- `POST /api/admin/collect/trigger` - Trigger data collection
+- `GET /api/admin/collect/status` - Collection status
+- `GET /api/admin/system/info` - System information
+
+**Generate API Key:**
 ```bash
-curl -H "X-API-Key: your-api-key" https://crypto-ai.your-domain.com/api/health
+python scripts/generate_admin_api_key.py
 ```
+
+**Use API Key:**
+```bash
+# Option 1: X-API-Key header (recommended)
+curl -H "X-API-Key: your-api-key" http://localhost:5000/api/admin/collect/status
+
+# Option 2: Authorization header
+curl -H "Authorization: Bearer your-api-key" http://localhost:5000/api/admin/collect/status
+
+# Option 3: Query parameter
+curl "http://localhost:5000/api/admin/collect/status?api_key=your-api-key"
+```
+
+**Security Notes:**
+- API keys are stored hashed in the database (never in config files)
+- Keys are shown only once when generated - save them securely!
+- Admin keys have full access to all admin endpoints
+- Keys can be revoked anytime via the API key manager
 
 ### Available Endpoints
 

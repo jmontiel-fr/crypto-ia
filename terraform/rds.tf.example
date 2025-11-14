@@ -1,0 +1,364 @@
+# =============================================================================
+# RDS PostgreSQL Configuration (Future Evolution)
+# =============================================================================
+# This file contains Terraform configuration for migrating from EC2 PostgreSQL
+# to Amazon RDS PostgreSQL. Uncomment and customize when ready to migrate.
+# =============================================================================
+
+# Uncomment to enable RDS
+
+/*
+
+# DB Subnet Group for RDS
+resource "aws_db_subnet_group" "crypto_saas" {
+  name       = "crypto-saas-db-subnet-group"
+  subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+
+  tags = {
+    Name        = "Crypto SaaS DB Subnet Group"
+    Environment = var.environment
+  }
+}
+
+# RDS PostgreSQL Instance
+resource "aws_db_instance" "crypto_saas" {
+  identifier = "crypto-saas-db"
+  
+  # Engine Configuration
+  engine               = "postgres"
+  engine_version       = "15.4"
+  instance_class       = "db.t3.micro"  # Upgrade to db.t3.small for production
+  allocated_storage    = 20
+  max_allocated_storage = 100  # Enable storage autoscaling
+  storage_type         = "gp3"
+  storage_encrypted    = true
+  kms_key_id          = aws_kms_key.rds.arn
+  
+  # Database Configuration
+  db_name  = "crypto_db"
+  username = "crypto_user"
+  password = var.db_password  # Store in AWS Secrets Manager
+  port     = 5432
+  
+  # Parameter Group
+  parameter_group_name = aws_db_parameter_group.crypto_saas.name
+  
+  # Backup Configuration
+  backup_retention_period   = 7
+  backup_window            = "03:00-04:00"  # UTC
+  maintenance_window       = "mon:04:00-mon:05:00"  # UTC
+  copy_tags_to_snapshot    = true
+  delete_automated_backups = false
+  
+  # High Availability
+  multi_az               = false  # Set to true for production HA
+  availability_zone      = var.availability_zone  # Only if multi_az = false
+  
+  # Networking
+  db_subnet_group_name   = aws_db_subnet_group.crypto_saas.name
+  vpc_security_group_ids = [aws_security_group.rds.id]
+  publicly_accessible    = false
+  
+  # Monitoring and Logging
+  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
+  monitoring_interval             = 60  # Enhanced monitoring
+  monitoring_role_arn            = aws_iam_role.rds_monitoring.arn
+  performance_insights_enabled    = true
+  performance_insights_retention_period = 7
+  
+  # Deletion Protection
+  deletion_protection       = true
+  skip_final_snapshot      = false
+  final_snapshot_identifier = "crypto-saas-db-final-snapshot-${formatdate("YYYY-MM-DD-hhmm", timestamp())}"
+  
+  # Auto Minor Version Upgrade
+  auto_minor_version_upgrade = true
+  
+  # Apply changes immediately (set to false for production)
+  apply_immediately = false
+  
+  tags = {
+    Name        = "Crypto SaaS Database"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+  
+  lifecycle {
+    prevent_destroy = true  # Prevent accidental deletion
+  }
+}
+
+# DB Parameter Group
+resource "aws_db_parameter_group" "crypto_saas" {
+  name   = "crypto-saas-pg15"
+  family = "postgres15"
+
+  # Performance tuning parameters
+  parameter {
+    name  = "shared_buffers"
+    value = "256MB"
+  }
+
+  parameter {
+    name  = "effective_cache_size"
+    value = "1GB"
+  }
+
+  parameter {
+    name  = "work_mem"
+    value = "4MB"
+  }
+
+  parameter {
+    name  = "maintenance_work_mem"
+    value = "64MB"
+  }
+
+  parameter {
+    name  = "checkpoint_completion_target"
+    value = "0.9"
+  }
+
+  parameter {
+    name  = "wal_buffers"
+    value = "16MB"
+  }
+
+  parameter {
+    name  = "default_statistics_target"
+    value = "100"
+  }
+
+  parameter {
+    name  = "random_page_cost"
+    value = "1.1"  # For SSD storage
+  }
+
+  parameter {
+    name  = "effective_io_concurrency"
+    value = "200"  # For SSD storage
+  }
+
+  # Logging parameters
+  parameter {
+    name  = "log_min_duration_statement"
+    value = "1000"  # Log queries taking more than 1 second
+  }
+
+  parameter {
+    name  = "log_connections"
+    value = "1"
+  }
+
+  parameter {
+    name  = "log_disconnections"
+    value = "1"
+  }
+
+  parameter {
+    name  = "log_lock_waits"
+    value = "1"
+  }
+
+  tags = {
+    Name        = "Crypto SaaS Parameter Group"
+    Environment = var.environment
+  }
+}
+
+# Security Group for RDS
+resource "aws_security_group" "rds" {
+  name        = "crypto-saas-rds-sg"
+  description = "Security group for RDS PostgreSQL"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "PostgreSQL from EC2"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ec2.id]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "Crypto SaaS RDS Security Group"
+    Environment = var.environment
+  }
+}
+
+# IAM Role for RDS Enhanced Monitoring
+resource "aws_iam_role" "rds_monitoring" {
+  name = "crypto-saas-rds-monitoring-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "monitoring.rds.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name        = "Crypto SaaS RDS Monitoring Role"
+    Environment = var.environment
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring" {
+  role       = aws_iam_role.rds_monitoring.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
+}
+
+# KMS Key for RDS Encryption
+resource "aws_kms_key" "rds" {
+  description             = "KMS key for RDS encryption"
+  deletion_window_in_days = 10
+  enable_key_rotation     = true
+
+  tags = {
+    Name        = "Crypto SaaS RDS KMS Key"
+    Environment = var.environment
+  }
+}
+
+resource "aws_kms_alias" "rds" {
+  name          = "alias/crypto-saas-rds"
+  target_key_id = aws_kms_key.rds.key_id
+}
+
+# Read Replica (Optional - for scaling reads)
+resource "aws_db_instance" "crypto_saas_replica" {
+  count = var.enable_read_replica ? 1 : 0
+  
+  identifier          = "crypto-saas-db-replica"
+  replicate_source_db = aws_db_instance.crypto_saas.identifier
+  instance_class      = "db.t3.micro"
+  
+  # Networking
+  publicly_accessible    = false
+  vpc_security_group_ids = [aws_security_group.rds.id]
+  
+  # Monitoring
+  monitoring_interval  = 60
+  monitoring_role_arn = aws_iam_role.rds_monitoring.arn
+  
+  # Backup
+  skip_final_snapshot = true
+  
+  # Auto Minor Version Upgrade
+  auto_minor_version_upgrade = true
+  
+  tags = {
+    Name        = "Crypto SaaS Database Replica"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+}
+
+# CloudWatch Alarms for RDS
+resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
+  alarm_name          = "crypto-saas-rds-high-cpu"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/RDS"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "80"
+  alarm_description   = "This metric monitors RDS CPU utilization"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.crypto_saas.id
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_storage" {
+  alarm_name          = "crypto-saas-rds-low-storage"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = "1"
+  metric_name         = "FreeStorageSpace"
+  namespace           = "AWS/RDS"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "2000000000"  # 2GB in bytes
+  alarm_description   = "This metric monitors RDS free storage space"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.crypto_saas.id
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_connections" {
+  alarm_name          = "crypto-saas-rds-high-connections"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "DatabaseConnections"
+  namespace           = "AWS/RDS"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "80"
+  alarm_description   = "This metric monitors RDS database connections"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.crypto_saas.id
+  }
+}
+
+# Outputs
+output "rds_endpoint" {
+  description = "RDS instance endpoint"
+  value       = aws_db_instance.crypto_saas.endpoint
+  sensitive   = true
+}
+
+output "rds_arn" {
+  description = "RDS instance ARN"
+  value       = aws_db_instance.crypto_saas.arn
+}
+
+output "rds_replica_endpoint" {
+  description = "RDS replica endpoint"
+  value       = var.enable_read_replica ? aws_db_instance.crypto_saas_replica[0].endpoint : null
+  sensitive   = true
+}
+
+*/
+
+# =============================================================================
+# Variables for RDS Configuration
+# =============================================================================
+
+variable "db_password" {
+  description = "Password for the RDS database"
+  type        = string
+  sensitive   = true
+  default     = ""  # Set via environment variable or Secrets Manager
+}
+
+variable "enable_read_replica" {
+  description = "Enable read replica for RDS"
+  type        = bool
+  default     = false
+}
+
+variable "availability_zone" {
+  description = "Availability zone for single-AZ RDS deployment"
+  type        = string
+  default     = "us-east-1a"
+}

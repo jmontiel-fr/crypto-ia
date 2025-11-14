@@ -1,0 +1,488 @@
+# =============================================================================
+# Auto Scaling and Load Balancing Configuration (Future Evolution)
+# =============================================================================
+# This file contains Terraform configuration for scaling the application
+# with Application Load Balancer and Auto Scaling Group.
+# Uncomment and customize when ready to scale beyond single EC2 instance.
+# =============================================================================
+
+# Uncomment to enable Auto Scaling
+
+/*
+
+# =============================================================================
+# Application Load Balancer
+# =============================================================================
+
+resource "aws_lb" "crypto_saas" {
+  name               = "crypto-saas-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = [aws_subnet.public_a.id, aws_subnet.public_b.id]
+
+  enable_deletion_protection = true
+  enable_http2              = true
+  enable_cross_zone_load_balancing = true
+
+  tags = {
+    Name        = "Crypto SaaS ALB"
+    Environment = var.environment
+  }
+}
+
+# Target Group for Flask API
+resource "aws_lb_target_group" "api" {
+  name     = "crypto-saas-api-tg"
+  port     = 5000
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+    timeout             = 5
+    interval            = 30
+    path                = "/api/health"
+    matcher             = "200"
+  }
+
+  deregistration_delay = 30
+
+  tags = {
+    Name        = "Crypto SaaS API Target Group"
+    Environment = var.environment
+  }
+}
+
+# Target Group for Streamlit Dashboard
+resource "aws_lb_target_group" "dashboard" {
+  name     = "crypto-saas-dashboard-tg"
+  port     = 8501
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+    timeout             = 5
+    interval            = 30
+    path                = "/_stcore/health"
+    matcher             = "200"
+  }
+
+  deregistration_delay = 30
+
+  tags = {
+    Name        = "Crypto SaaS Dashboard Target Group"
+    Environment = var.environment
+  }
+}
+
+# HTTPS Listener
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.crypto_saas.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
+  certificate_arn   = aws_acm_certificate.crypto_saas.arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api.arn
+  }
+}
+
+# HTTP Listener (redirect to HTTPS)
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.crypto_saas.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+# Listener Rule for Dashboard
+resource "aws_lb_listener_rule" "dashboard" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.dashboard.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/dashboard*", "/_stcore/*"]
+    }
+  }
+}
+
+# Security Group for ALB
+resource "aws_security_group" "alb" {
+  name        = "crypto-saas-alb-sg"
+  description = "Security group for Application Load Balancer"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description = "HTTPS from anywhere"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTP from anywhere"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "Crypto SaaS ALB Security Group"
+    Environment = var.environment
+  }
+}
+
+# =============================================================================
+# Auto Scaling Group
+# =============================================================================
+
+# Launch Template
+resource "aws_launch_template" "crypto_saas" {
+  name_prefix   = "crypto-saas-"
+  image_id      = data.aws_ami.amazon_linux_2023.id
+  instance_type = var.instance_type
+
+  key_name = var.key_name
+
+  vpc_security_group_ids = [aws_security_group.ec2_asg.id]
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ec2.name
+  }
+
+  user_data = base64encode(templatefile("${path.module}/user-data-asg.sh", {
+    rds_endpoint = aws_db_instance.crypto_saas.endpoint
+    environment  = var.environment
+  }))
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+
+    ebs {
+      volume_size           = 20
+      volume_type           = "gp3"
+      delete_on_termination = true
+      encrypted             = true
+    }
+  }
+
+  monitoring {
+    enabled = true
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+
+    tags = {
+      Name        = "Crypto SaaS ASG Instance"
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Auto Scaling Group
+resource "aws_autoscaling_group" "crypto_saas" {
+  name                = "crypto-saas-asg"
+  vpc_zone_identifier = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+  target_group_arns   = [aws_lb_target_group.api.arn, aws_lb_target_group.dashboard.arn]
+  health_check_type   = "ELB"
+  health_check_grace_period = 300
+
+  min_size         = 2
+  max_size         = 10
+  desired_capacity = 2
+
+  launch_template {
+    id      = aws_launch_template.crypto_saas.id
+    version = "$Latest"
+  }
+
+  enabled_metrics = [
+    "GroupDesiredCapacity",
+    "GroupInServiceInstances",
+    "GroupMaxSize",
+    "GroupMinSize",
+    "GroupPendingInstances",
+    "GroupStandbyInstances",
+    "GroupTerminatingInstances",
+    "GroupTotalInstances"
+  ]
+
+  tag {
+    key                 = "Name"
+    value               = "Crypto SaaS ASG"
+    propagate_at_launch = true
+  }
+
+  tag {
+    key                 = "Environment"
+    value               = var.environment
+    propagate_at_launch = true
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Auto Scaling Policy - CPU Based
+resource "aws_autoscaling_policy" "cpu_scaling" {
+  name                   = "crypto-saas-cpu-scaling"
+  autoscaling_group_name = aws_autoscaling_group.crypto_saas.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = 70.0
+  }
+}
+
+# Auto Scaling Policy - Request Count Based
+resource "aws_autoscaling_policy" "request_count_scaling" {
+  name                   = "crypto-saas-request-count-scaling"
+  autoscaling_group_name = aws_autoscaling_group.crypto_saas.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ALBRequestCountPerTarget"
+      resource_label         = "${aws_lb.crypto_saas.arn_suffix}/${aws_lb_target_group.api.arn_suffix}"
+    }
+    target_value = 1000.0
+  }
+}
+
+# Security Group for ASG Instances
+resource "aws_security_group" "ec2_asg" {
+  name        = "crypto-saas-ec2-asg-sg"
+  description = "Security group for Auto Scaling Group instances"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    description     = "HTTP from ALB"
+    from_port       = 5000
+    to_port         = 5000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  ingress {
+    description     = "Streamlit from ALB"
+    from_port       = 8501
+    to_port         = 8501
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+  }
+
+  ingress {
+    description = "SSH from bastion"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.developer_ip]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name        = "Crypto SaaS EC2 ASG Security Group"
+    Environment = var.environment
+  }
+}
+
+# =============================================================================
+# NAT Gateway for Private Subnets
+# =============================================================================
+
+# Elastic IP for NAT Gateway
+resource "aws_eip" "nat" {
+  domain = "vpc"
+
+  tags = {
+    Name        = "Crypto SaaS NAT Gateway EIP"
+    Environment = var.environment
+  }
+}
+
+# NAT Gateway
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public_a.id
+
+  tags = {
+    Name        = "Crypto SaaS NAT Gateway"
+    Environment = var.environment
+  }
+
+  depends_on = [aws_internet_gateway.main]
+}
+
+# Route Table for Private Subnets
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.main.id
+  }
+
+  tags = {
+    Name        = "Crypto SaaS Private Route Table"
+    Environment = var.environment
+  }
+}
+
+# Route Table Associations
+resource "aws_route_table_association" "private_a" {
+  subnet_id      = aws_subnet.private_a.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "private_b" {
+  subnet_id      = aws_subnet.private_b.id
+  route_table_id = aws_route_table.private.id
+}
+
+# =============================================================================
+# ACM Certificate for HTTPS
+# =============================================================================
+
+resource "aws_acm_certificate" "crypto_saas" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+
+  subject_alternative_names = [
+    "*.${var.domain_name}"
+  ]
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name        = "Crypto SaaS Certificate"
+    Environment = var.environment
+  }
+}
+
+# =============================================================================
+# CloudWatch Alarms for Auto Scaling
+# =============================================================================
+
+resource "aws_cloudwatch_metric_alarm" "asg_high_cpu" {
+  alarm_name          = "crypto-saas-asg-high-cpu"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "80"
+  alarm_description   = "This metric monitors ASG CPU utilization"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.crypto_saas.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
+  alarm_name          = "crypto-saas-alb-unhealthy-hosts"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = "60"
+  statistic           = "Average"
+  threshold           = "0"
+  alarm_description   = "This metric monitors unhealthy hosts behind ALB"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    LoadBalancer = aws_lb.crypto_saas.arn_suffix
+    TargetGroup  = aws_lb_target_group.api.arn_suffix
+  }
+}
+
+# =============================================================================
+# Outputs
+# =============================================================================
+
+output "alb_dns_name" {
+  description = "DNS name of the Application Load Balancer"
+  value       = aws_lb.crypto_saas.dns_name
+}
+
+output "alb_zone_id" {
+  description = "Zone ID of the Application Load Balancer"
+  value       = aws_lb.crypto_saas.zone_id
+}
+
+output "asg_name" {
+  description = "Name of the Auto Scaling Group"
+  value       = aws_autoscaling_group.crypto_saas.name
+}
+
+*/
+
+# =============================================================================
+# Variables for Scaling Configuration
+# =============================================================================
+
+variable "instance_type" {
+  description = "EC2 instance type for Auto Scaling Group"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "domain_name" {
+  description = "Domain name for the application"
+  type        = string
+  default     = "crypto-vision.com"
+}

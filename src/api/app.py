@@ -141,6 +141,7 @@ def register_blueprints(app: Flask) -> None:
     from src.api.routes.admin import admin_bp
     from src.api.routes.health import health_bp
     from src.api.routes.api_keys import api_keys_bp
+    from src.api.routes.portfolio import portfolio_bp
     
     # Register blueprints with URL prefixes
     app.register_blueprint(health_bp)
@@ -149,6 +150,7 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(chat_bp, url_prefix='/api/chat')
     app.register_blueprint(admin_bp, url_prefix='/api/admin')
     app.register_blueprint(api_keys_bp, url_prefix='/api/admin/keys')
+    app.register_blueprint(portfolio_bp, url_prefix='/api/portfolio')
     
     logger.info("Blueprints registered")
 

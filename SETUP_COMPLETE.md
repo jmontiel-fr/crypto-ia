@@ -29,8 +29,10 @@ crypto-market-analysis-saas/
 ├── pytest.ini                    # Pytest configuration
 ├── .gitignore                    # Git ignore rules
 ├── .env.example                  # General environment template
-├── local-env.example             # Local development template
-├── aws-env.example               # AWS production template
+├── local-env.sqlite.example      # SQLite template (quick start)
+├── local-env.postgresql.example  # PostgreSQL template (production-like)
+├── aws-env.ec2.example           # AWS EC2+PostgreSQL template
+├── aws-env.rds.example           # AWS EC2+RDS template
 └── README.md                     # Updated project documentation
 ```
 
@@ -73,15 +75,25 @@ crypto-market-analysis-saas/
 Three template files for different deployment scenarios:
 
 - **`.env.example`**: Comprehensive template with all options documented
-- **`local-env.example`**: Local development configuration
+- **`local-env.sqlite.example`**: SQLite template for quick start
+  - No database installation required
+  - Perfect for testing and development
+  - Debug logging
+- **`local-env.postgresql.example`**: PostgreSQL template for production-like setup
   - Local PostgreSQL database
   - Debug logging
   - Twilio SMS provider
   - Development SSL certificates
   - URL: https://crypto-ai.local:10443
 
-- **`aws-env.example`**: AWS production configuration
-  - EC2-hosted PostgreSQL
+- **`aws-env.ec2.example`**: AWS EC2 with PostgreSQL configuration
+  - PostgreSQL on same EC2 instance
+  - Automated setup scripts
+  - Lower cost option
+  - Info logging
+- **`aws-env.rds.example`**: AWS EC2 with RDS configuration
+  - Managed PostgreSQL database (Amazon RDS)
+  - High availability and automated backups
   - Info logging
   - AWS SNS for SMS
   - Production SSL certificates
@@ -150,7 +162,12 @@ To continue development:
 
 1. **Set up local environment**:
    ```bash
-   cp local-env.example local-env
+   # Quick start with SQLite
+   cp local-env.sqlite.example local-env
+   
+   # OR production-like with PostgreSQL
+   # cp local-env.postgresql.example local-env
+   
    # Edit local-env with your values
    ```
 

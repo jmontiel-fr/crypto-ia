@@ -13,18 +13,25 @@ from typing import Optional
 def setup_logging(
     log_level: str = "INFO",
     log_file: str = "logs/crypto_saas.log",
-    log_format: Optional[str] = None
+    log_format: Optional[str] = None,
+    base_path: Optional[str] = None
 ) -> None:
     """
     Set up logging configuration with file and console handlers.
     
     Args:
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_file: Path to log file
+        log_file: Path to log file (relative to base_path if provided)
         log_format: Optional custom log format string
+        base_path: Optional base path for log files (from ENVIRONMENT_PATH)
     """
+    # Resolve log file path
+    if base_path:
+        log_path = Path(base_path) / log_file
+    else:
+        log_path = Path(log_file)
+    
     # Create logs directory if it doesn't exist
-    log_path = Path(log_file)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Default log format
@@ -52,7 +59,7 @@ def setup_logging(
     
     # File handler with rotation (10 MB max, keep 30 backups)
     file_handler = logging.handlers.RotatingFileHandler(
-        log_file,
+        str(log_path),
         maxBytes=10 * 1024 * 1024,  # 10 MB
         backupCount=30,
         encoding='utf-8'
@@ -62,7 +69,7 @@ def setup_logging(
     root_logger.addHandler(file_handler)
     
     # Log startup message
-    root_logger.info(f"Logging initialized - Level: {log_level}, File: {log_file}")
+    root_logger.info(f"Logging initialized - Level: {log_level}, File: {log_path}")
     
     # Set third-party loggers to WARNING to reduce noise
     logging.getLogger('urllib3').setLevel(logging.WARNING)

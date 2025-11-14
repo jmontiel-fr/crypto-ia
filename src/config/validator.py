@@ -1,18 +1,13 @@
 """
-Environment Variable Validation Module
-
-This module validates required environment variables and checks their values
-to ensure the application is properly configured before startup.
+Environment Configuration Validator
+Validates required environment variables and configuration settings
 """
 
 import os
-import re
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse
-import logging
-
-logger = logging.getLogger(__name__)
+from typing import List, Tuple, Optional
+import re
 
 
 class ConfigValidationError(Exception):
@@ -21,43 +16,43 @@ class ConfigValidationError(Exception):
 
 
 class EnvironmentValidator:
-    """Validates environment variables and configuration"""
+    """Validates environment configuration"""
     
-    # Required environment variables
+    # Required variables for all environments
     REQUIRED_VARS = [
+        'ENVIRONMENT',
         'DATABASE_URL',
         'OPENAI_API_KEY',
+        'WEB_UI_HOST',
         'SECRET_KEY',
     ]
     
-    # Optional but recommended variables
-    RECOMMENDED_VARS = [
-        'COLLECTION_START_DATE',
-        'TOP_N_CRYPTOS',
-        'WEB_UI_HOST',
-        'LOG_LEVEL',
-    ]
-    
-    # Variables that should not use example values in production
-    EXAMPLE_PATTERNS = [
-        'your_',
+    # Variables that should not have example values in production
+    EXAMPLE_VALUES = [
+        'your_openai_key_here',
+        'your_binance_key_here',
+        'your_twilio_sid_here',
         'CHANGE_ME',
-        'example',
-        'test_key',
-        'dummy',
+        'local_dev_secret_key_change_in_production',
     ]
     
-    def __init__(self, environment: str = None):
+    # SSL certificate paths to verify
+    SSL_CERT_VARS = [
+        'SSL_CERT_PATH',
+        'SSL_KEY_PATH',
+    ]
+    
+    def __init__(self, environment: Optional[str] = None):
         """
         Initialize validator
         
         Args:
-            environment: Environment name (local, production, etc.)
+            environment: Environment name (local, production). If None, reads from ENVIRONMENT var
         """
         self.environment = environment or os.getenv('ENVIRONMENT', 'local')
         self.errors: List[str] = []
         self.warnings: List[str] = []
-        
+    
     def validate_all(self) -> Tuple[bool, List[str], List[str]]:
         """
         Run all validation checks
@@ -73,11 +68,10 @@ class EnvironmentValidator:
         self._validate_database_url()
         self._validate_openai_config()
         self._validate_ssl_certificates()
+        self._validate_production_settings()
         self._validate_api_keys()
-        self._validate_numeric_values()
-        self._validate_file_paths()
-        self._check_recommended_vars()
-        self._check_production_settings()
+        self._validate_alert_config()
+        self._validate_paths()
         
         is_valid = len(self.errors) == 0
         return is_valid, self.errors, self.warnings
@@ -92,313 +86,269 @@ class EnvironmentValidator:
                 self.errors.append(f"Required environment variable '{var}' is empty")
     
     def _validate_database_url(self):
-        """Validate DATABASE_URL format and connectivity"""
-        db_url = os.getenv('DATABASE_URL')
+        """Validate database connection string"""
+        db_url = os.getenv('DATABASE_URL', '')
+        
         if not db_url:
             return  # Already caught by required vars check
         
+        # Check format
+        if not db_url.startswith('postgresql://'):
+            self.errors.append("DATABASE_URL must start with 'postgresql://'")
+            return
+        
+        # Parse URL components
         try:
-            parsed = urlparse(db_url)
+            # Remove protocol
+            url_parts = db_url.replace('postgresql://', '')
             
-            # Check scheme
-            if parsed.scheme not in ['postgresql', 'postgres']:
-                self.errors.append(
-                    f"DATABASE_URL must use postgresql:// scheme, got: {parsed.scheme}"
-                )
+            # Check for credentials
+            if '@' not in url_parts:
+                self.errors.append("DATABASE_URL must include credentials (user:password@host)")
+                return
             
-            # Check hostname
-            if not parsed.hostname:
-                self.errors.append("DATABASE_URL missing hostname")
+            creds, host_db = url_parts.split('@', 1)
             
-            # Check database name
-            if not parsed.path or parsed.path == '/':
-                self.errors.append("DATABASE_URL missing database name")
+            # Check credentials format
+            if ':' not in creds:
+                self.errors.append("DATABASE_URL credentials must be in format user:password")
             
-            # Check credentials
-            if not parsed.username:
-                self.warnings.append("DATABASE_URL missing username")
-            if not parsed.password:
-                self.warnings.append("DATABASE_URL missing password")
-            
-            # Check for example values
-            if parsed.password and any(pattern in parsed.password.lower() 
-                                      for pattern in self.EXAMPLE_PATTERNS):
-                if self.environment == 'production':
-                    self.errors.append(
-                        "DATABASE_URL contains example password in production environment"
-                    )
-                else:
-                    self.warnings.append(
-                        "DATABASE_URL appears to contain example password"
-                    )
-                    
+            # Check host and database
+            if '/' not in host_db:
+                self.errors.append("DATABASE_URL must include database name")
+            else:
+                host_port, db_name = host_db.split('/', 1)
+                
+                if not db_name:
+                    self.errors.append("DATABASE_URL database name cannot be empty")
+                
+                # Warn about default passwords
+                if 'crypto_pass' in creds and self.environment == 'production':
+                    self.warnings.append("Using default database password in production is not recommended")
+        
         except Exception as e:
             self.errors.append(f"Invalid DATABASE_URL format: {str(e)}")
     
     def _validate_openai_config(self):
-        """Validate OpenAI API configuration"""
-        api_key = os.getenv('OPENAI_API_KEY')
+        """Validate OpenAI configuration"""
+        api_key = os.getenv('OPENAI_API_KEY', '')
+        
         if not api_key:
             return  # Already caught by required vars check
         
-        # Check for example values
-        if any(pattern in api_key.lower() for pattern in self.EXAMPLE_PATTERNS):
-            self.errors.append(
-                "OPENAI_API_KEY appears to be an example value. "
-                "Please set a valid OpenAI API key."
-            )
+        # Check for example value
+        if api_key in self.EXAMPLE_VALUES:
+            self.errors.append("OPENAI_API_KEY is set to example value. Please provide a valid API key")
         
         # Check key format (OpenAI keys start with 'sk-')
-        if not api_key.startswith('sk-'):
-            self.warnings.append(
-                "OPENAI_API_KEY does not start with 'sk-'. "
-                "This may not be a valid OpenAI API key."
-            )
+        if not api_key.startswith('sk-') and api_key not in self.EXAMPLE_VALUES:
+            self.warnings.append("OPENAI_API_KEY does not start with 'sk-'. Verify this is a valid key")
         
-        # Validate model name
-        model = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
-        valid_models = ['gpt-4o-mini', 'gpt-4o', 'gpt-4', 'gpt-3.5-turbo']
-        if model not in valid_models:
-            self.warnings.append(
-                f"OPENAI_MODEL '{model}' is not a recognized model. "
-                f"Valid models: {', '.join(valid_models)}"
-            )
-        
-        # Validate temperature
-        try:
-            temp = float(os.getenv('OPENAI_TEMPERATURE', '0.7'))
-            if not 0 <= temp <= 2:
-                self.warnings.append(
-                    f"OPENAI_TEMPERATURE should be between 0 and 2, got: {temp}"
-                )
-        except ValueError:
-            self.errors.append("OPENAI_TEMPERATURE must be a number")
-        
-        # Validate max tokens
-        try:
-            max_tokens = int(os.getenv('OPENAI_MAX_TOKENS', '500'))
-            if max_tokens < 1 or max_tokens > 4096:
-                self.warnings.append(
-                    f"OPENAI_MAX_TOKENS should be between 1 and 4096, got: {max_tokens}"
-                )
-        except ValueError:
-            self.errors.append("OPENAI_MAX_TOKENS must be an integer")
+        # Check model is set
+        model = os.getenv('OPENAI_MODEL', '')
+        if not model:
+            self.warnings.append("OPENAI_MODEL is not set. Will use default model")
     
     def _validate_ssl_certificates(self):
-        """Validate SSL certificate paths"""
-        cert_path = os.getenv('SSL_CERT_PATH')
-        key_path = os.getenv('SSL_KEY_PATH')
-        
-        if cert_path:
-            if not Path(cert_path).exists():
-                self.warnings.append(
-                    f"SSL certificate file not found: {cert_path}"
-                )
-        
-        if key_path:
-            if not Path(key_path).exists():
-                self.warnings.append(
-                    f"SSL key file not found: {key_path}"
-                )
-            elif Path(key_path).exists():
-                # Check permissions on key file
-                stat_info = Path(key_path).stat()
-                if stat_info.st_mode & 0o077:
-                    self.warnings.append(
-                        f"SSL key file has insecure permissions: {key_path}. "
-                        "Should be readable only by owner (chmod 600)"
-                    )
-    
-    def _validate_api_keys(self):
-        """Validate API keys for external services"""
-        # Binance API keys
-        binance_key = os.getenv('BINANCE_API_KEY')
-        binance_secret = os.getenv('BINANCE_API_SECRET')
-        
-        if binance_key and any(pattern in binance_key.lower() 
-                               for pattern in self.EXAMPLE_PATTERNS):
-            self.warnings.append(
-                "BINANCE_API_KEY appears to be an example value"
-            )
-        
-        if binance_secret and any(pattern in binance_secret.lower() 
-                                  for pattern in self.EXAMPLE_PATTERNS):
-            self.warnings.append(
-                "BINANCE_API_SECRET appears to be an example value"
-            )
-        
-        # Twilio credentials
-        if os.getenv('SMS_PROVIDER') == 'twilio':
-            twilio_sid = os.getenv('TWILIO_ACCOUNT_SID')
-            twilio_token = os.getenv('TWILIO_AUTH_TOKEN')
+        """Validate SSL certificate paths exist"""
+        for var in self.SSL_CERT_VARS:
+            cert_path = os.getenv(var, '')
             
-            if not twilio_sid:
-                self.warnings.append(
-                    "SMS_PROVIDER is 'twilio' but TWILIO_ACCOUNT_SID is not set"
-                )
-            elif any(pattern in twilio_sid.lower() for pattern in self.EXAMPLE_PATTERNS):
-                self.warnings.append(
-                    "TWILIO_ACCOUNT_SID appears to be an example value"
-                )
+            if not cert_path:
+                self.warnings.append(f"{var} is not set. HTTPS may not work")
+                continue
             
-            if not twilio_token:
-                self.warnings.append(
-                    "SMS_PROVIDER is 'twilio' but TWILIO_AUTH_TOKEN is not set"
-                )
-            elif any(pattern in twilio_token.lower() for pattern in self.EXAMPLE_PATTERNS):
-                self.warnings.append(
-                    "TWILIO_AUTH_TOKEN appears to be an example value"
-                )
-        
-        # AWS SNS
-        if os.getenv('SMS_PROVIDER') == 'aws_sns':
-            sns_topic = os.getenv('AWS_SNS_TOPIC_ARN')
-            if not sns_topic:
-                self.warnings.append(
-                    "SMS_PROVIDER is 'aws_sns' but AWS_SNS_TOPIC_ARN is not set"
-                )
+            # Check if path exists
+            path = Path(cert_path)
+            if not path.exists():
+                self.warnings.append(f"{var} points to non-existent file: {cert_path}")
+            elif not path.is_file():
+                self.errors.append(f"{var} does not point to a file: {cert_path}")
+            else:
+                # Check file permissions
+                if var == 'SSL_KEY_PATH':
+                    # Private key should have restricted permissions
+                    if path.stat().st_mode & 0o077:
+                        self.warnings.append(f"SSL private key {cert_path} has overly permissive permissions")
     
-    def _validate_numeric_values(self):
-        """Validate numeric configuration values"""
-        numeric_configs = {
-            'TOP_N_CRYPTOS': (1, 100),
-            'PREDICTION_HORIZON_HOURS': (1, 168),
-            'SEQUENCE_LENGTH': (24, 720),
-            'ALERT_THRESHOLD_PERCENT': (0.1, 100),
-            'ALERT_COOLDOWN_HOURS': (1, 24),
-            'RATE_LIMIT_PER_MINUTE': (1, 10000),
-            'DB_POOL_SIZE': (1, 100),
-            'DB_MAX_OVERFLOW': (0, 100),
-        }
-        
-        for var, (min_val, max_val) in numeric_configs.items():
-            value_str = os.getenv(var)
-            if value_str:
-                try:
-                    value = float(value_str)
-                    if not min_val <= value <= max_val:
-                        self.warnings.append(
-                            f"{var} should be between {min_val} and {max_val}, got: {value}"
-                        )
-                except ValueError:
-                    self.errors.append(f"{var} must be a number, got: {value_str}")
-    
-    def _validate_file_paths(self):
-        """Validate file and directory paths"""
-        log_file = os.getenv('LOG_FILE')
-        if log_file:
-            log_dir = Path(log_file).parent
-            if not log_dir.exists():
-                self.warnings.append(
-                    f"Log directory does not exist: {log_dir}. "
-                    "It will be created on startup."
-                )
-    
-    def _check_recommended_vars(self):
-        """Check for recommended but optional variables"""
-        for var in self.RECOMMENDED_VARS:
-            if not os.getenv(var):
-                self.warnings.append(
-                    f"Recommended environment variable '{var}' is not set. "
-                    "Using default value."
-                )
-    
-    def _check_production_settings(self):
-        """Check production-specific settings"""
+    def _validate_production_settings(self):
+        """Validate production-specific settings"""
         if self.environment != 'production':
             return
         
         # Check SECRET_KEY is not default
         secret_key = os.getenv('SECRET_KEY', '')
-        if 'local' in secret_key.lower() or 'dev' in secret_key.lower():
-            self.errors.append(
-                "SECRET_KEY appears to be a development value in production environment"
-            )
+        if secret_key in self.EXAMPLE_VALUES:
+            self.errors.append("SECRET_KEY must be changed from default value in production")
+        
+        if len(secret_key) < 32:
+            self.warnings.append("SECRET_KEY should be at least 32 characters for production")
         
         # Check DEBUG is disabled
         debug = os.getenv('DEBUG', 'false').lower()
-        if debug in ['true', '1', 'yes']:
-            self.errors.append(
-                "DEBUG should be disabled in production environment"
-            )
+        if debug in ('true', '1', 'yes'):
+            self.warnings.append("DEBUG mode is enabled in production. This is not recommended")
         
         # Check LOG_LEVEL
         log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
         if log_level == 'DEBUG':
-            self.warnings.append(
-                "LOG_LEVEL is set to DEBUG in production. "
-                "Consider using INFO or WARNING."
-            )
+            self.warnings.append("LOG_LEVEL is set to DEBUG in production. Consider using INFO or WARNING")
         
         # Check API key requirement
-        api_key_required = os.getenv('API_KEY_REQUIRED', 'true').lower()
-        if api_key_required not in ['true', '1', 'yes']:
-            self.errors.append(
-                "API_KEY_REQUIRED should be enabled in production environment"
-            )
+        api_key_required = os.getenv('API_KEY_REQUIRED', 'false').lower()
+        if api_key_required not in ('true', '1', 'yes'):
+            self.warnings.append("API_KEY_REQUIRED is disabled in production. This is a security risk")
     
-    def print_report(self):
-        """Print validation report"""
+    def _validate_api_keys(self):
+        """Validate API keys are not example values"""
+        api_key_vars = [
+            'BINANCE_API_KEY',
+            'BINANCE_API_SECRET',
+            'TWILIO_ACCOUNT_SID',
+            'TWILIO_AUTH_TOKEN',
+        ]
+        
+        for var in api_key_vars:
+            value = os.getenv(var, '')
+            if value and value in self.EXAMPLE_VALUES:
+                self.warnings.append(f"{var} is set to example value. Update with actual credentials if using this service")
+    
+    def _validate_alert_config(self):
+        """Validate alert system configuration"""
+        alert_enabled = os.getenv('ALERT_ENABLED', 'false').lower()
+        
+        if alert_enabled in ('true', '1', 'yes'):
+            # Check SMS provider is configured
+            sms_provider = os.getenv('SMS_PROVIDER', '')
+            if not sms_provider:
+                self.warnings.append("ALERT_ENABLED is true but SMS_PROVIDER is not set")
+            
+            # Check phone number format
+            phone = os.getenv('SMS_PHONE_NUMBER', '')
+            if phone and not re.match(r'^\+\d{10,15}$', phone):
+                self.warnings.append("SMS_PHONE_NUMBER should be in E.164 format (e.g., +1234567890)")
+            
+            # Check provider-specific config
+            if sms_provider == 'twilio':
+                if not os.getenv('TWILIO_ACCOUNT_SID'):
+                    self.errors.append("SMS_PROVIDER is 'twilio' but TWILIO_ACCOUNT_SID is not set")
+                if not os.getenv('TWILIO_AUTH_TOKEN'):
+                    self.errors.append("SMS_PROVIDER is 'twilio' but TWILIO_AUTH_TOKEN is not set")
+            elif sms_provider == 'aws_sns':
+                if not os.getenv('AWS_SNS_TOPIC_ARN'):
+                    self.errors.append("SMS_PROVIDER is 'aws_sns' but AWS_SNS_TOPIC_ARN is not set")
+    
+    def _validate_paths(self):
+        """Validate file paths exist"""
+        # Check log directory
+        log_file = os.getenv('LOG_FILE', '')
+        if log_file:
+            log_dir = Path(log_file).parent
+            if not log_dir.exists():
+                self.warnings.append(f"Log directory does not exist: {log_dir}. It will be created on startup")
+    
+    def print_results(self):
+        """Print validation results to console"""
+        if self.errors:
+            print("\n❌ Configuration Errors:")
+            for error in self.errors:
+                print(f"  - {error}")
+        
+        if self.warnings:
+            print("\n⚠️  Configuration Warnings:")
+            for warning in self.warnings:
+                print(f"  - {warning}")
+        
+        if not self.errors and not self.warnings:
+            print("\n✅ Configuration validation passed!")
+    
+    def validate_or_exit(self):
+        """Validate configuration and exit if errors found"""
         is_valid, errors, warnings = self.validate_all()
         
-        print("\n" + "="*70)
-        print(f"Environment Configuration Validation Report")
-        print(f"Environment: {self.environment}")
-        print("="*70)
+        self.print_results()
         
-        if errors:
-            print(f"\n❌ ERRORS ({len(errors)}):")
-            for i, error in enumerate(errors, 1):
-                print(f"  {i}. {error}")
+        if not is_valid:
+            print("\n❌ Configuration validation failed. Please fix the errors above.")
+            sys.exit(1)
         
         if warnings:
-            print(f"\n⚠️  WARNINGS ({len(warnings)}):")
-            for i, warning in enumerate(warnings, 1):
-                print(f"  {i}. {warning}")
+            print("\n⚠️  Configuration has warnings but will continue.")
         
-        if not errors and not warnings:
-            print("\n✅ All configuration checks passed!")
-        
-        print("\n" + "="*70)
-        
-        return is_valid
+        return True
 
 
-def validate_environment(raise_on_error: bool = True) -> bool:
+def validate_database_connection():
     """
-    Validate environment configuration
+    Test database connection
     
-    Args:
-        raise_on_error: If True, raise ConfigValidationError on validation failure
-        
     Returns:
-        True if validation passed, False otherwise
-        
-    Raises:
-        ConfigValidationError: If validation fails and raise_on_error is True
+        bool: True if connection successful, False otherwise
     """
-    validator = EnvironmentValidator()
-    is_valid, errors, warnings = validator.validate_all()
-    
-    # Log warnings
-    for warning in warnings:
-        logger.warning(warning)
-    
-    # Handle errors
-    if not is_valid:
-        for error in errors:
-            logger.error(error)
+    try:
+        from sqlalchemy import create_engine, text
         
-        if raise_on_error:
-            error_msg = f"Configuration validation failed with {len(errors)} error(s)"
-            raise ConfigValidationError(error_msg)
+        db_url = os.getenv('DATABASE_URL')
+        if not db_url:
+            print("❌ DATABASE_URL not set")
+            return False
+        
+        # Create engine with short timeout
+        engine = create_engine(
+            db_url,
+            pool_pre_ping=True,
+            connect_args={'connect_timeout': 5}
+        )
+        
+        # Test connection
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        
+        print("✅ Database connection successful")
+        return True
     
-    return is_valid
+    except ImportError:
+        print("⚠️  SQLAlchemy not installed. Skipping database connection test")
+        return True
+    
+    except Exception as e:
+        print(f"❌ Database connection failed: {str(e)}")
+        return False
+
+
+def main():
+    """Main validation entry point"""
+    print("=" * 70)
+    print("Crypto Market Analysis SaaS - Configuration Validator")
+    print("=" * 70)
+    
+    # Check if .env file is loaded
+    if not os.getenv('ENVIRONMENT'):
+        print("\n⚠️  No environment variables loaded.")
+        print("Make sure to load your .env file before running this validator.")
+        print("\nExample:")
+        print("  export $(cat local-env | xargs)")
+        print("  python -m src.config.validator")
+        sys.exit(1)
+    
+    environment = os.getenv('ENVIRONMENT', 'local')
+    print(f"\nEnvironment: {environment}")
+    print("-" * 70)
+    
+    # Run validation
+    validator = EnvironmentValidator(environment)
+    validator.validate_or_exit()
+    
+    # Test database connection
+    print("\n" + "-" * 70)
+    print("Testing database connection...")
+    print("-" * 70)
+    validate_database_connection()
+    
+    print("\n" + "=" * 70)
+    print("Validation complete!")
+    print("=" * 70)
 
 
 if __name__ == '__main__':
-    # Run validation when executed directly
-    validator = EnvironmentValidator()
-    is_valid = validator.print_report()
-    
-    exit(0 if is_valid else 1)
+    main()

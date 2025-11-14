@@ -541,7 +541,10 @@
 
 
 
-  - [ ] 13.1 Create dependency installation script
+  - [x] 13.1 Create dependency installation script
+
+
+
 
 
 
@@ -564,9 +567,16 @@
     - Run database migrations to create schema
 
 
+
+
+
     - _Requirements: 11.6, 12.3_
   
-  - [ ] 13.3 Create application setup script
+  - [x] 13.3 Create application setup script
+
+
+
+
     - Write remote-scripts/setup-application.sh for app configuration
     - Create Python virtual environment
     - Install Python dependencies from requirements.txt
@@ -580,6 +590,9 @@
     - _Requirements: 11.8, 11.10, 11.11_
 
 
+
+
+
   
   - [ ] 13.4 Implement service control scripts
     - Write remote-scripts/start-services.sh to start all services
@@ -587,12 +600,19 @@
     - Write remote-scripts/restart-services.sh to restart services
 
 
+
+
+
     - Add health check logic to verify services are running
     - _Requirements: 11.8_
 
 
   
-  - [ ] 13.5 Create database backup script
+
+
+
+  - [x] 13.5 Create database backup script
+
     - Write remote-scripts/backup-database.sh for PostgreSQL backups
     - Use pg_dump to create database backups
     - Compress backups and store with timestamp
@@ -603,7 +623,8 @@
 
 - [ ] 14. Create environment configuration files
 
-  - [ ] 14.1 Create local environment template
+  - [x] 14.1 Create local environment template
+
     - Write local-env.example with all required variables
 
 
@@ -611,24 +632,36 @@
     - Configure crypto-ai.local:10443 as Web UI URL
     - Set appropriate defaults for local development
     - Add comments explaining each variable
+
     - _Requirements: 12.1, 12.4, 12.5_
 
 
   
-  - [ ] 14.2 Create AWS environment template
+
+
+
+  - [x] 14.2 Create AWS environment template
+
+
+
     - Write aws-env.example with all required variables
     - Set database URL for EC2-hosted PostgreSQL
     - Configure crypto-ai.crypto-vision.com as Web UI URL
+
     - Set production-appropriate defaults
     - Add security warnings for sensitive values
     - _Requirements: 12.2, 12.4, 12.5_
   
   - [ ] 14.3 Implement environment variable validation
     - Create config validation module to check required variables
+
     - Validate database connection on startup
     - Verify SSL certificate paths exist
     - Check API keys are not using example values in production
     - _Requirements: 12.6_
+
+
+
 
 - [ ] 15. Implement database migration system
 
@@ -636,23 +669,31 @@
     - Initialize Alembic in project
     - Configure Alembic to use SQLAlchemy models
     - Create alembic.ini with environment-specific settings
+
     - _Requirements: 11.6_
   
   - [ ] 15.2 Create initial database migration
     - Generate initial migration from SQLAlchemy models
     - Include all tables: cryptocurrencies, price_history, predictions, chat_history, query_audit_log, market_tendencies
     - Add indexes and constraints
+
     - Test migration on clean database
     - _Requirements: 11.6_
   
   - [ ] 15.3 Add migration helper scripts
     - Create script to run migrations (upgrade)
     - Create script to rollback migrations (downgrade)
+
+
     - Add script to check current migration version
+
+
+
     - Document migration workflow in DEVELOPMENT-GUIDE.md
     - _Requirements: 11.6_
 
-- [ ] 16. Configure web server and HTTPS
+- [x] 16. Configure web server and HTTPS
+
 
   - [ ] 16.1 Set up Nginx as reverse proxy
     - Install Nginx on EC2 instance
@@ -729,6 +770,12 @@
 
 
     - Document how to access the system (local and AWS URLs)
+
+
+
+
+
+
     - Explain Streamlit dashboard usage and features
     - Document chat interface usage and limitations
     - Provide API endpoint documentation with curl examples

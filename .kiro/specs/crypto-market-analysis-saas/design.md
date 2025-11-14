@@ -699,24 +699,59 @@ Response: {
 
 **Purpose**: Provide user-friendly interfaces for visualization and interaction
 
+The Web UI consists of three independent web applications accessed through a landing page:
+
+**Landing Page** (`www.crypto-vision.com`):
+- Simple HTML landing page with navigation
+- Two primary action buttons:
+  - **"View Dashboard"**: Links to Streamlit dashboard
+  - **"Chat Assistant"**: Links to Bootstrap5 chat interface
+- Responsive design for mobile and desktop
+- Minimal branding and system description
+- Technology: Static HTML5/CSS3/Bootstrap5
+
+**Access URLs**:
+
+*Local Development:*
+- Landing page: `http://www.crypto-vision.com` (or `http://localhost:80`)
+- Streamlit Dashboard: `http://localhost:8501`
+- Chat Interface: `https://crypto-ai.local:10443`
+
+*AWS Production:*
+- Landing page: `http://www.crypto-vision.com`
+- Streamlit Dashboard: `http://www.crypto-vision.com:8501` (or `http://dashboard.crypto-vision.com`)
+- Chat Interface: `https://crypto-ai.crypto-vision.com:10443` (or `https://chat.crypto-vision.com`)
+
 **Streamlit Dashboard** (`dashboard.py`):
 - Market overview with real-time data
 - Top 20 predictions visualization (charts, tables)
 - Market tendency indicator with historical trends
 - Data collection status and statistics
+- Port: 8501
+- Purpose: Data visualization and analytics
 
 **Bootstrap5 Chat Interface** (`templates/chat.html`):
 - ChatGPT-like conversation interface
 - Message history display (last 3 Q&A pairs)
 - Input validation and PII warning messages
 - Responsive design for mobile and desktop
+- Port: 10443 (HTTPS)
+- Purpose: Natural language interaction with GenAI
+
+**Architecture Notes**:
+- All three web applications are **independent and separate**
+- Each runs on its own port with dedicated purpose
+- Landing page provides unified entry point
+- Users navigate between applications via links/buttons
+- No iframe embedding or tight integration
+- Each application can be scaled independently
 
 **Technology Stack**:
+- Landing page: Static HTML5/CSS3/Bootstrap5
 - Streamlit: Data visualization and dashboards
-- HTML5/CSS3: Structure and styling
-- Bootstrap 5: Responsive UI components
+- Chat UI: HTML5/CSS3/Bootstrap5 with JavaScript
 - JavaScript: Client-side interactivity
-- Chart.js or Plotly: Interactive charts
+- Chart.js or Plotly: Interactive charts in Streamlit
 
 ### 7. Alert System
 

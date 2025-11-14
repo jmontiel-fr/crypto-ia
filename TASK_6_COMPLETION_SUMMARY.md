@@ -164,7 +164,12 @@ pip install -r requirements.txt
 
 ### 2. Configure Environment
 ```bash
-cp local-env.example local-env
+# Option 1: SQLite (Quick start)
+cp local-env.sqlite.example local-env
+
+# Option 2: PostgreSQL (Production-like)
+# cp local-env.postgresql.example local-env
+
 # Edit local-env with your configuration
 ```
 

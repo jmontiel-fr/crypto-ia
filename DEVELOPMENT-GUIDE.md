@@ -71,8 +71,10 @@ crypto-market-analysis-saas/
 ├── logs/                        # Application logs
 ├── requirements.txt             # Python dependencies
 ├── dashboard.py                 # Streamlit dashboard entry point
-├── local-env.example            # Local environment template
-├── aws-env.example              # AWS environment template
+├── local-env.sqlite.example     # SQLite template (quick start)
+├── local-env.postgresql.example # PostgreSQL template (production-like)
+├── aws-env.ec2.example          # AWS EC2+PostgreSQL template
+├── aws-env.rds.example          # AWS EC2+RDS template
 └── README.md                    # Project overview
 ```
 
@@ -203,7 +205,12 @@ chmod +x local-scripts/generate-ssl-cert.sh
 #### 6. Configure Environment
 
 ```bash
-cp local-env.example local-env
+# Option 1: SQLite (Quick start - no database install)
+cp local-env.sqlite.example local-env
+
+# Option 2: PostgreSQL (Production-like - requires PostgreSQL)
+# cp local-env.postgresql.example local-env
+
 # Edit local-env with your configuration
 nano local-env
 ```

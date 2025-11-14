@@ -80,9 +80,12 @@ def run_collection_task(mode: str, start_date: datetime = None, end_date: dateti
             {
                 'crypto_symbol': r.crypto_symbol,
                 'success': r.success,
+                'status': r.status,
                 'records_collected': r.records_collected,
                 'duration_seconds': r.duration_seconds,
-                'error_message': r.error_message
+                'error_message': r.error_message,
+                'retry_count': r.retry_count,
+                'missing_ranges_count': len(r.missing_ranges) if r.missing_ranges else 0
             }
             for r in results
         ]
@@ -239,10 +242,12 @@ def get_collection_status():
         if collection_status['results']:
             response['last_results'] = {
                 'total_cryptos': len(collection_status['results']),
-                'successful': sum(1 for r in collection_status['results'] if r.get('success', False)),
-                'failed': sum(1 for r in collection_status['results'] if not r.get('success', True)),
+                'complete': sum(1 for r in collection_status['results'] if r.get('status') == 'complete'),
+                'partial': sum(1 for r in collection_status['results'] if r.get('status') == 'partial'),
+                'failed': sum(1 for r in collection_status['results'] if r.get('status') == 'failed'),
+                'skipped': sum(1 for r in collection_status['results'] if r.get('status') == 'skipped'),
                 'total_records': sum(r.get('records_collected', 0) for r in collection_status['results']),
-                'details': collection_status['results']
+                'details': collection_status['results'][-20:]  # Last 20 for brevity
             }
         
         return jsonify(response), 200

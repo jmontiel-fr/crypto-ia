@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 
 # Services to manage
 SERVICES=(
-    "postgresql"
+    "postgresql-crypto"
     "crypto-saas-api"
     "crypto-saas-dashboard"
     "crypto-saas-collector"
@@ -90,43 +90,95 @@ wait_for_service() {
 check_health() {
     log "Checking service health..."
     
+    local health_issues=0
+    
     # Check PostgreSQL
-    if systemctl is-active --quiet postgresql; then
+    if systemctl is-active --quiet postgresql-crypto; then
         if sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
             log_info "✓ PostgreSQL is healthy"
         else
             log_warn "⚠ PostgreSQL is running but not responding"
+            ((health_issues++))
         fi
+    else
+        log_error "✗ PostgreSQL is not running"
+        ((health_issues++))
     fi
     
     # Check API health endpoint
     if systemctl is-active --quiet crypto-saas-api; then
-        sleep 2  # Give API time to start
-        if curl -s -f http://localhost:5000/health >/dev/null 2>&1; then
+        sleep 3  # Give API time to start
+        if curl -s -f http://localhost:5000/api/health >/dev/null 2>&1; then
             log_info "✓ Flask API is healthy"
         else
             log_warn "⚠ Flask API is running but health check failed"
+            ((health_issues++))
         fi
+    else
+        log_error "✗ Flask API is not running"
+        ((health_issues++))
     fi
     
     # Check Streamlit
     if systemctl is-active --quiet crypto-saas-dashboard; then
-        sleep 2  # Give Streamlit time to start
-        if curl -s -f http://localhost:8501 >/dev/null 2>&1; then
+        sleep 3  # Give Streamlit time to start
+        if curl -s -f http://localhost:8501/_stcore/health >/dev/null 2>&1; then
             log_info "✓ Streamlit Dashboard is healthy"
         else
             log_warn "⚠ Streamlit Dashboard is running but not responding"
+            ((health_issues++))
         fi
+    else
+        log_error "✗ Streamlit Dashboard is not running"
+        ((health_issues++))
+    fi
+    
+    # Check Data Collector
+    if systemctl is-active --quiet crypto-saas-collector; then
+        log_info "✓ Data Collector is running"
+    else
+        log_error "✗ Data Collector is not running"
+        ((health_issues++))
+    fi
+    
+    # Check Alert System
+    if systemctl is-active --quiet crypto-saas-alerts; then
+        log_info "✓ Alert System is running"
+    else
+        log_error "✗ Alert System is not running"
+        ((health_issues++))
     fi
     
     # Check Nginx
     if systemctl is-active --quiet nginx; then
-        if curl -s -f -k https://localhost/health >/dev/null 2>&1; then
+        if curl -s -f -k https://localhost:10443 >/dev/null 2>&1; then
             log_info "✓ Nginx is healthy"
         else
             log_warn "⚠ Nginx is running but not responding"
+            ((health_issues++))
         fi
+    else
+        log_error "✗ Nginx is not running"
+        ((health_issues++))
     fi
+    
+    # Check disk space
+    local disk_usage=$(df /opt | awk 'NR==2 {print $5}' | sed 's/%//')
+    if [[ $disk_usage -gt 90 ]]; then
+        log_warn "⚠ Disk usage is high: ${disk_usage}%"
+    else
+        log_info "✓ Disk usage is normal: ${disk_usage}%"
+    fi
+    
+    # Check memory usage
+    local mem_usage=$(free | awk '/Mem:/ {printf "%.0f", $3/$2 * 100}')
+    if [[ $mem_usage -gt 90 ]]; then
+        log_warn "⚠ Memory usage is high: ${mem_usage}%"
+    else
+        log_info "✓ Memory usage is normal: ${mem_usage}%"
+    fi
+    
+    return $health_issues
 }
 
 # Main execution
@@ -145,7 +197,7 @@ main() {
         fi
         
         # Wait for critical services to be ready
-        if [[ "$service" == "postgresql" || "$service" == "crypto-saas-api" ]]; then
+        if [[ "$service" == "postgresql-crypto" || "$service" == "crypto-saas-api" ]]; then
             wait_for_service "$service"
         fi
     done
@@ -174,13 +226,19 @@ main() {
     
     echo
     log_info "Access Points:"
-    echo "  - API: https://crypto-ai.crypto-vision.com/api"
-    echo "  - Dashboard: https://crypto-ai.crypto-vision.com"
-    echo "  - Chat: https://crypto-ai.crypto-vision.com/chat"
+    echo "  - Landing Page: https://crypto-ai.crypto-vision.com:10443"
+    echo "  - API: https://crypto-ai.crypto-vision.com:10443/api"
+    echo "  - Dashboard: http://crypto-ai.crypto-vision.com:8501"
+    echo "  - Chat: https://crypto-ai.crypto-vision.com:10443/chat"
     echo
     log_info "To view logs:"
     echo "  sudo journalctl -u crypto-saas-api -f"
+    echo "  sudo journalctl -u crypto-saas-dashboard -f"
     echo "  sudo tail -f /var/log/crypto-saas/api.log"
+    echo "  sudo tail -f /var/log/crypto-saas/dashboard.log"
+    echo
+    log_info "To check status:"
+    echo "  sudo systemctl status crypto-saas-*"
 }
 
 # Run main function

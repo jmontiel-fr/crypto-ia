@@ -299,6 +299,35 @@ class PriceHistoryRepository:
             .first()
         return result[0] if result else None
     
+    def get_timestamps_in_range(
+        self,
+        crypto_id: int,
+        start_time: datetime,
+        end_time: datetime
+    ) -> List[datetime]:
+        """
+        Get all timestamps for a cryptocurrency within time range.
+        
+        Args:
+            crypto_id: Cryptocurrency ID.
+            start_time: Start of time range.
+            end_time: End of time range.
+        
+        Returns:
+            List of timestamps ordered chronologically.
+        """
+        results = self.session.query(PriceHistory.timestamp)\
+            .filter(
+                and_(
+                    PriceHistory.crypto_id == crypto_id,
+                    PriceHistory.timestamp >= start_time,
+                    PriceHistory.timestamp <= end_time
+                )
+            )\
+            .order_by(asc(PriceHistory.timestamp))\
+            .all()
+        return [r[0] for r in results]
+    
     def get_earliest_timestamp(self, crypto_id: int) -> Optional[datetime]:
         """
         Get the earliest timestamp for a cryptocurrency.

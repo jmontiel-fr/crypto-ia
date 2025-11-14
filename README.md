@@ -4,28 +4,56 @@ An AI-powered cryptocurrency market analysis platform that provides predictions,
 
 ## 🚀 Quick Start
 
-### Local Development (1-Minute Setup)
+### Prerequisites
+
+**You need:**
+1. **Python 3.11+** - Programming language
+2. **OpenAI API Key** - Get from https://platform.openai.com/api-keys
+3. **Database** (Optional) - SQLite (no install) or PostgreSQL ([Install Guide](docs/LOCAL-DEPLOYMENT-GUIDE.md#step-1-install-postgresql))
+
+> 💡 **New to the project?** See [CONFIGURATION-OPTIONS.md](CONFIGURATION-OPTIONS.md) for a quick guide on choosing the right setup.
+
+### Local Development Setup
+
+**Option 1: Quick Start (5 minutes)**
+
+See [QUICKSTART.md](QUICKSTART.md) for the fastest way to get running.
+
+**Option 2: Automated Setup**
 
 ```bash
-# Clone and setup
-git clone <repository-url>
-cd crypto-market-analysis-saas
-
-# Automated setup
-chmod +x local-scripts/setup-local-env.sh
+# Run the automated setup script
 ./local-scripts/setup-local-env.sh
 
-# Add your OpenAI API key
-nano local-env
+# Follow the prompts to:
+# - Install dependencies
+# - Setup PostgreSQL database
+# - Configure environment
+# - Run migrations
+```
 
-# Start the application
-python start.py --development
+**Option 3: Manual Setup**
+
+See [docs/LOCAL-DEPLOYMENT-GUIDE.md](docs/LOCAL-DEPLOYMENT-GUIDE.md) for detailed step-by-step instructions.
+
+### Start the Application
+
+```bash
+# Terminal 1 - API Server
+source venv/bin/activate
+export $(cat local-env | xargs)
+python run_api.py
+
+# Terminal 2 - Dashboard
+source venv/bin/activate
+export $(cat local-env | xargs)
+python run_dashboard.py
 ```
 
 **Access the application:**
-- Main App: https://crypto-ai.local:10443
-- Dashboard: http://localhost:8501
-- API: https://crypto-ai.local:10443/api
+- **API Health**: http://localhost:5000/api/health
+- **Dashboard**: http://localhost:8501
+- **Chat Interface**: https://crypto-ai.local:10443/chat
 
 ### AWS Deployment (Production)
 
@@ -54,6 +82,13 @@ cd ..
 - **Natural Language Queries**: Ask questions about crypto markets in plain English
 - **Context-Aware Responses**: Combines internal predictions with external knowledge
 - **Safety Features**: PII protection, topic validation, content filtering
+
+### 🔄 Smart Data Collection (NEW!)
+- **Interruption-Safe**: Resume automatically after interruptions without losing progress
+- **Smart Resume**: Only fetches missing data ranges (no duplicates)
+- **Automatic Retry**: Failed batches retry up to 3 times with exponential backoff
+- **Real-Time Progress**: Monitor collection status per-crypto and overall
+- **100 Cryptos Tracked**: Top 100 cryptocurrencies by market cap with hourly data
 
 ### 📊 Interactive Dashboard
 - **Real-Time Data**: Live cryptocurrency prices and market data
@@ -212,9 +247,55 @@ SMS_PHONE_NUMBER=+1234567890
 
 ### Configuration Files
 
-- **`local-env`** - Local development configuration
-- **`aws-env`** - AWS production configuration
-- **`terraform/terraform.tfvars`** - Infrastructure configuration
+**Local Development:**
+- **`local-env`** - Your local configuration (you create this)
+- **`local-env.sqlite.example`** - SQLite template (quick start, no DB install)
+- **`local-env.postgresql.example`** - PostgreSQL template (production-like)
+
+**AWS Production:**
+- **`aws-env`** - Your AWS configuration (you create this)
+- **`aws-env.ec2.example`** - EC2 with PostgreSQL template (simpler, lower cost)
+- **`aws-env.rds.example`** - EC2 with RDS template (managed DB, high availability)
+
+**Infrastructure:**
+- **`terraform/terraform.tfvars`** - Terraform infrastructure configuration
+
+**Choose Your Local Database:**
+
+```bash
+# Option 1: SQLite (Quick Start - No installation required)
+cp local-env.sqlite.example local-env
+
+# Option 2: PostgreSQL (Production-like - Requires PostgreSQL)
+cp local-env.postgresql.example local-env
+```
+
+**Choose Your AWS Database:**
+
+```bash
+# Option 1: EC2 with PostgreSQL (Simpler, automated setup)
+cp aws-env.ec2.example aws-env
+
+# Option 2: EC2 with RDS (Managed database, better for production)
+cp aws-env.rds.example aws-env
+```
+
+**Deployment Path Configuration:**
+
+The application supports deployment to a specific directory using `ENVIRONMENT_PATH`:
+
+```bash
+# Local (Windows)
+ENVIRONMENT_PATH=C:\crypto-ia
+
+# Local (Linux/macOS)
+ENVIRONMENT_PATH=/opt/crypto-ia
+
+# AWS Production
+ENVIRONMENT_PATH=/opt/crypto-ia
+```
+
+This controls where logs, models, databases, and other files are stored. See [Environment Path Guide](docs/ENVIRONMENT-PATH-GUIDE.md) for details.
 
 ## 💰 Cost Estimates
 
@@ -271,12 +352,18 @@ python health_check.py
 
 ## 🔒 Security Features
 
+- **API Key Authentication**: Secure admin endpoints with hashed API keys stored in database
 - **PII Protection**: Automatic detection and blocking of personal information
 - **Data Encryption**: All data encrypted in transit and at rest
 - **Audit Logging**: Comprehensive logging of all system activities
-- **Access Control**: API key authentication and rate limiting
+- **Access Control**: Role-based API key authentication and rate limiting
 - **Network Security**: Restricted access via AWS Security Groups
 - **Compliance**: GDPR-compliant data handling and retention
+
+**Generate Admin API Key:**
+```bash
+python scripts/generate_admin_api_key.py
+```
 
 ## 📊 Monitoring
 
@@ -339,3 +426,166 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 **Built with ❤️ for the crypto community**
+
+--
+-
+
+## 📚 Documentation
+
+### Getting Started
+- **[QUICKSTART.md](QUICKSTART.md)** - Get running in 5 minutes
+- **[docs/LOCAL-DEPLOYMENT-GUIDE.md](docs/LOCAL-DEPLOYMENT-GUIDE.md)** - Complete local setup guide
+- **[DEVELOPMENT-GUIDE.md](DEVELOPMENT-GUIDE.md)** - Development workflow and best practices
+
+### Deployment
+- **[DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md)** - AWS deployment instructions
+- **[docs/RDS-MIGRATION-GUIDE.md](docs/RDS-MIGRATION-GUIDE.md)** - Migrate to Amazon RDS
+
+### Usage
+- **[USER-GUIDE.md](USER-GUIDE.md)** - How to use the system
+- **[REST-API-GUIDE.md](REST-API-GUIDE.md)** - API documentation with examples
+- **[DASHBOARD_GUIDE.md](DASHBOARD_GUIDE.md)** - Dashboard features
+- **[docs/QUICK-START-COLLECTOR.md](docs/QUICK-START-COLLECTOR.md)** - Data collection quick start (NEW!)
+- **[docs/COLLECTOR-IMPROVEMENTS.md](docs/COLLECTOR-IMPROVEMENTS.md)** - Smart collector features (NEW!)
+
+### Operations
+- **[alembic/README.md](alembic/README.md)** - Database migrations
+- **[SECURITY-CONFORMANCE-GUIDE.md](SECURITY-CONFORMANCE-GUIDE.md)** - Security practices
+
+### Reference
+- **[IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md)** - Project completion summary
+
+---
+
+## 🔧 Common Tasks
+
+### Database Operations
+
+```bash
+# Run migrations
+python scripts/migrate_upgrade.py
+
+# Check current version
+python scripts/migrate_current.py
+
+# Rollback migration
+python scripts/migrate_downgrade.py -1
+
+# Backup database
+pg_dump -U crypto_user -d crypto_db > backup.sql
+```
+
+### Testing
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=src --cov-report=html
+
+# Run specific test
+pytest tests/test_api_basic.py
+```
+
+### Data Collection
+
+```bash
+# Trigger manual collection
+curl -X POST http://localhost:5000/api/admin/collect/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"manual","start_date":"2024-01-01"}'
+
+# Check collection status
+curl http://localhost:5000/api/admin/collect/status
+```
+
+---
+
+## 🐛 Troubleshooting
+
+### PostgreSQL Issues
+
+**Can't connect to database:**
+```bash
+# Check if PostgreSQL is running
+# Windows:
+sc query postgresql-x64-15
+
+# macOS:
+brew services list | grep postgresql
+
+# Linux:
+sudo systemctl status postgresql
+```
+
+**Database doesn't exist:**
+```bash
+psql -U postgres
+CREATE DATABASE crypto_db;
+CREATE USER crypto_user WITH PASSWORD 'crypto_pass';
+GRANT ALL PRIVILEGES ON DATABASE crypto_db TO crypto_user;
+```
+
+### Python Issues
+
+**Module not found:**
+```bash
+# Make sure virtual environment is activated
+source venv/bin/activate  # or venv\Scripts\activate on Windows
+
+# Reinstall dependencies
+pip install -r requirements.txt
+```
+
+**Port already in use:**
+```bash
+# Find and kill process using port 5000
+# Windows:
+netstat -ano | findstr :5000
+taskkill /PID <PID> /F
+
+# macOS/Linux:
+lsof -i :5000
+kill -9 <PID>
+```
+
+### OpenAI API Issues
+
+**Invalid API key:**
+1. Get a valid key from https://platform.openai.com/api-keys
+2. Update `local-env` file
+3. Reload environment variables
+4. Restart services
+
+See [docs/LOCAL-DEPLOYMENT-GUIDE.md#troubleshooting](docs/LOCAL-DEPLOYMENT-GUIDE.md#troubleshooting) for more solutions.
+
+---
+
+## 💡 Tips
+
+- **First Time Setup**: Follow [QUICKSTART.md](QUICKSTART.md) for the fastest path
+- **Need Help**: Check [docs/LOCAL-DEPLOYMENT-GUIDE.md](docs/LOCAL-DEPLOYMENT-GUIDE.md) for detailed instructions
+- **PostgreSQL Required**: You must have PostgreSQL installed and running
+- **OpenAI Key Required**: Get your API key before starting
+- **Multiple Terminals**: You need separate terminals for API and Dashboard
+
+---
+
+## 📞 Support
+
+For detailed help with specific topics:
+
+| Topic | Documentation |
+|-------|---------------|
+| Local Setup | [docs/LOCAL-DEPLOYMENT-GUIDE.md](docs/LOCAL-DEPLOYMENT-GUIDE.md) |
+| AWS Deployment | [DEPLOYMENT-GUIDE.md](DEPLOYMENT-GUIDE.md) |
+| API Usage | [REST-API-GUIDE.md](REST-API-GUIDE.md) |
+| Database | [alembic/README.md](alembic/README.md) |
+| Security | [SECURITY-CONFORMANCE-GUIDE.md](SECURITY-CONFORMANCE-GUIDE.md) |
+
+---
+
+**Status**: ✅ Production Ready  
+**Version**: 1.0.0  
+**Last Updated**: November 11, 2024

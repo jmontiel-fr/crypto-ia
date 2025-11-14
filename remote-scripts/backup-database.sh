@@ -12,30 +12,39 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-BACKUP_DIR="/var/backups/crypto-saas"
+BACKUP_DIR="/data/postgresql/backups"
 DB_NAME="crypto_db"
 DB_USER="crypto_user"
 RETENTION_DAYS=7
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="$BACKUP_DIR/crypto_db_backup_$TIMESTAMP.sql"
 COMPRESSED_FILE="$BACKUP_FILE.gz"
-S3_BUCKET=""  # Optional: Set S3 bucket name for cloud backups
+S3_BUCKET="${S3_BACKUP_BUCKET:-}"  # Optional: Set S3 bucket name for cloud backups
+LOG_FILE="/var/log/crypto-saas/backup.log"
 
 # Logging functions
 log() {
-    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
+    local msg="${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
+    echo -e "$msg"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
 log_warn() {
-    echo -e "${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}"
+    local msg="${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}"
+    echo -e "$msg"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] WARNING: $1" >> "$LOG_FILE"
 }
 
 log_error() {
-    echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}"
+    local msg="${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}"
+    echo -e "$msg"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $1" >> "$LOG_FILE"
 }
 
 log_info() {
-    echo -e "${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] INFO: $1${NC}"
+    local msg="${BLUE}[$(date +'%Y-%m-%d %H:%M:%S')] INFO: $1${NC}"
+    echo -e "$msg"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] INFO: $1" >> "$LOG_FILE"
 }
 
 # Check if running as root or postgres user
@@ -60,23 +69,46 @@ create_backup_dir() {
 check_postgresql() {
     log "Checking PostgreSQL status..."
     
-    if ! systemctl is-active --quiet postgresql; then
+    if ! systemctl is-active --quiet postgresql-crypto; then
         log_error "PostgreSQL is not running"
         exit 1
     fi
     
-    log_info "✓ PostgreSQL is running"
+    # Test database connectivity
+    if [[ $(whoami) == "postgres" ]]; then
+        if ! psql -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" >/dev/null 2>&1; then
+            log_error "Cannot connect to database $DB_NAME"
+            exit 1
+        fi
+    else
+        if ! su - postgres -c "psql -U $DB_USER -d $DB_NAME -c 'SELECT 1'" >/dev/null 2>&1; then
+            log_error "Cannot connect to database $DB_NAME"
+            exit 1
+        fi
+    fi
+    
+    log_info "✓ PostgreSQL is running and accessible"
 }
 
 # Create database backup
 create_backup() {
     log "Creating database backup..."
     
-    # Run pg_dump as postgres user
+    # Run pg_dump as postgres user with verbose output
     if [[ $(whoami) == "postgres" ]]; then
-        pg_dump -U "$DB_USER" -d "$DB_NAME" -F p -f "$BACKUP_FILE"
+        if pg_dump -U "$DB_USER" -d "$DB_NAME" -F p -f "$BACKUP_FILE" --verbose 2>&1 | tee -a "$LOG_FILE"; then
+            log_info "pg_dump completed successfully"
+        else
+            log_error "pg_dump failed"
+            exit 1
+        fi
     else
-        su - postgres -c "pg_dump -U $DB_USER -d $DB_NAME -F p -f $BACKUP_FILE"
+        if su - postgres -c "pg_dump -U $DB_USER -d $DB_NAME -F p -f $BACKUP_FILE --verbose" 2>&1 | tee -a "$LOG_FILE"; then
+            log_info "pg_dump completed successfully"
+        else
+            log_error "pg_dump failed"
+            exit 1
+        fi
     fi
     
     if [[ ! -f "$BACKUP_FILE" ]]; then
@@ -224,9 +256,25 @@ print_summary() {
     echo "  gunzip -c $COMPRESSED_FILE | psql -U $DB_USER -d $DB_NAME"
 }
 
+# Send notification on failure
+send_failure_notification() {
+    local error_msg="$1"
+    
+    log_error "Backup failed: $error_msg"
+    
+    # Log to system log
+    logger -t crypto-saas-backup "BACKUP FAILED: $error_msg"
+    
+    # Could integrate with alert system here
+    # Example: curl -X POST http://localhost:5000/api/admin/alert -d "Backup failed: $error_msg"
+}
+
 # Main execution
 main() {
     log "Starting database backup for Crypto Market Analysis SaaS"
+    
+    # Ensure log directory exists
+    mkdir -p "$(dirname $LOG_FILE)"
     
     # Check permissions
     check_permissions
@@ -235,16 +283,28 @@ main() {
     create_backup_dir
     
     # Check PostgreSQL
-    check_postgresql
+    if ! check_postgresql; then
+        send_failure_notification "PostgreSQL check failed"
+        exit 1
+    fi
     
     # Create backup
-    create_backup
+    if ! create_backup; then
+        send_failure_notification "Backup creation failed"
+        exit 1
+    fi
     
     # Compress backup
-    compress_backup
+    if ! compress_backup; then
+        send_failure_notification "Backup compression failed"
+        exit 1
+    fi
     
     # Verify backup
-    verify_backup
+    if ! verify_backup; then
+        send_failure_notification "Backup verification failed"
+        exit 1
+    fi
     
     # Upload to S3 (optional)
     upload_to_s3
@@ -254,6 +314,8 @@ main() {
     
     # Print summary
     print_summary
+    
+    log "Backup process completed successfully"
 }
 
 # Handle script arguments
@@ -266,16 +328,55 @@ case "${1:-}" in
         get_db_stats
         exit 0
         ;;
+    --restore)
+        if [[ -z "${2:-}" ]]; then
+            log_error "Please specify backup file to restore"
+            echo "Usage: $0 --restore <backup_file>"
+            exit 1
+        fi
+        
+        RESTORE_FILE="$2"
+        if [[ ! -f "$RESTORE_FILE" ]]; then
+            log_error "Backup file not found: $RESTORE_FILE"
+            exit 1
+        fi
+        
+        log_warn "WARNING: This will restore the database from backup"
+        log_warn "All current data will be replaced!"
+        read -p "Are you sure? (yes/no): " confirm
+        
+        if [[ "$confirm" != "yes" ]]; then
+            log "Restore cancelled"
+            exit 0
+        fi
+        
+        log "Restoring database from $RESTORE_FILE..."
+        
+        if [[ "$RESTORE_FILE" == *.gz ]]; then
+            gunzip -c "$RESTORE_FILE" | psql -U "$DB_USER" -d "$DB_NAME"
+        else
+            psql -U "$DB_USER" -d "$DB_NAME" < "$RESTORE_FILE"
+        fi
+        
+        log "Database restored successfully"
+        exit 0
+        ;;
     --help)
         echo "Usage: $0 [OPTIONS]"
         echo
         echo "Options:"
-        echo "  --list    List existing backups"
-        echo "  --stats   Show database statistics"
-        echo "  --help    Show this help message"
+        echo "  --list              List existing backups"
+        echo "  --stats             Show database statistics"
+        echo "  --restore <file>    Restore database from backup file"
+        echo "  --help              Show this help message"
         echo
         echo "Environment variables:"
-        echo "  S3_BUCKET    S3 bucket name for cloud backups (optional)"
+        echo "  S3_BACKUP_BUCKET    S3 bucket name for cloud backups (optional)"
+        echo
+        echo "Examples:"
+        echo "  $0                                    # Create backup"
+        echo "  $0 --list                             # List backups"
+        echo "  $0 --restore /path/to/backup.sql.gz   # Restore backup"
         exit 0
         ;;
     "")

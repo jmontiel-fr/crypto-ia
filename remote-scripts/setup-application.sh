@@ -1,6 +1,6 @@
 #!/bin/bash
-# Remote Application Setup Script
-# Configures the Crypto Market Analysis SaaS application on AWS EC2
+# Application Setup Script for AWS EC2
+# Configures the Crypto Market Analysis SaaS application
 
 set -euo pipefail
 
@@ -14,12 +14,17 @@ NC='\033[0m' # No Color
 # Configuration
 APP_USER="crypto-app"
 APP_DIR="/opt/crypto-saas"
-LOG_DIR="/var/log/crypto-saas"
 VENV_DIR="$APP_DIR/venv"
+LOG_DIR="/var/log/crypto-saas"
+CONFIG_DIR="/etc/crypto-saas"
+CERT_DIR="$APP_DIR/certs"
 NGINX_CONF_DIR="/etc/nginx"
 SYSTEMD_DIR="/etc/systemd/system"
-SSL_CERT_DIR="/etc/ssl/certs"
-SSL_KEY_DIR="/etc/ssl/private"
+
+# Service ports
+FLASK_PORT=5000
+STREAMLIT_PORT=8501
+HTTPS_PORT=10443
 
 # Logging functions
 log() {
@@ -46,250 +51,187 @@ check_root() {
     fi
 }
 
+# Verify prerequisites
+verify_prerequisites() {
+    log "Verifying prerequisites..."
+    
+    # Check if application user exists
+    if ! id "$APP_USER" &>/dev/null; then
+        log_error "Application user $APP_USER does not exist"
+        log_error "Please run install-dependencies.sh first"
+        exit 1
+    fi
+    
+    # Check if PostgreSQL is running
+    if ! systemctl is-active --quiet postgresql-crypto.service; then
+        log_error "PostgreSQL service is not running"
+        log_error "Please run setup-postgresql.sh first"
+        exit 1
+    fi
+    
+    # Check if application directory exists
+    if [[ ! -d "$APP_DIR" ]]; then
+        log_error "Application directory $APP_DIR does not exist"
+        exit 1
+    fi
+    
+    # Check if Python is installed
+    if ! command -v python3 &>/dev/null; then
+        log_error "Python 3 is not installed"
+        exit 1
+    fi
+    
+    log "Prerequisites verified"
+}
+
 # Create Python virtual environment
-create_virtualenv() {
+create_virtual_environment() {
     log "Creating Python virtual environment..."
     
-    # Remove existing venv if present
+    # Remove existing venv if it exists
     if [[ -d "$VENV_DIR" ]]; then
         log_warn "Removing existing virtual environment"
         rm -rf "$VENV_DIR"
     fi
     
-    # Create new virtual environment as app user
-    su - "$APP_USER" -c "python3 -m venv $VENV_DIR"
+    # Create new virtual environment
+    sudo -u "$APP_USER" python3 -m venv "$VENV_DIR"
     
     # Upgrade pip, setuptools, and wheel
-    su - "$APP_USER" -c "$VENV_DIR/bin/pip install --upgrade pip setuptools wheel"
+    sudo -u "$APP_USER" "$VENV_DIR/bin/pip" install --upgrade pip setuptools wheel
     
     log "Virtual environment created at $VENV_DIR"
 }
 
 # Install Python dependencies
 install_python_dependencies() {
-    log "Installing Python dependencies from requirements.txt..."
+    log "Installing Python dependencies..."
     
+    # Check if requirements.txt exists
     if [[ ! -f "$APP_DIR/requirements.txt" ]]; then
         log_error "requirements.txt not found in $APP_DIR"
         log_error "Please deploy application code first"
         exit 1
     fi
     
-    # Install dependencies as app user
-    su - "$APP_USER" -c "$VENV_DIR/bin/pip install -r $APP_DIR/requirements.txt"
+    # Install dependencies
+    log_info "This may take several minutes..."
+    sudo -u "$APP_USER" "$VENV_DIR/bin/pip" install -r "$APP_DIR/requirements.txt"
     
-    # Download spaCy language model for PII detection
-    log "Downloading spaCy language model..."
-    su - "$APP_USER" -c "$VENV_DIR/bin/python -m spacy download en_core_web_sm"
+    # Download spaCy language model
+    log_info "Downloading spaCy language model..."
+    sudo -u "$APP_USER" "$VENV_DIR/bin/python" -m spacy download en_core_web_sm
     
-    log "Python dependencies installed successfully"
+    log "Python dependencies installed"
 }
 
-# Configure environment file
+# Configure environment variables
 configure_environment() {
-    log "Configuring environment file..."
+    log "Configuring environment variables..."
     
-    if [[ -f "$APP_DIR/aws-env.example" ]]; then
-        if [[ ! -f "$APP_DIR/.env" ]]; then
-            # Copy example to .env
-            cp "$APP_DIR/aws-env.example" "$APP_DIR/.env"
-            log_warn "Created .env from aws-env.example"
-            log_warn "IMPORTANT: Edit $APP_DIR/.env with actual values before starting services"
-        else
-            log_info ".env file already exists, skipping"
-        fi
-    else
+    # Check if aws-env.example exists
+    if [[ ! -f "$APP_DIR/aws-env.example" ]]; then
         log_error "aws-env.example not found in $APP_DIR"
         exit 1
     fi
     
-    # Set ownership and permissions
+    # Create .env file if it doesn't exist
+    if [[ ! -f "$APP_DIR/.env" ]]; then
+        log_info "Creating .env file from aws-env.example"
+        sudo -u "$APP_USER" cp "$APP_DIR/aws-env.example" "$APP_DIR/.env"
+        
+        # Load database configuration
+        if [[ -f "$CONFIG_DIR/database.conf" ]]; then
+            source "$CONFIG_DIR/database.conf"
+            
+            # Update database connection in .env
+            sudo -u "$APP_USER" sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$DATABASE_URL|" "$APP_DIR/.env"
+            sudo -u "$APP_USER" sed -i "s|^DB_HOST=.*|DB_HOST=$DB_HOST|" "$APP_DIR/.env"
+            sudo -u "$APP_USER" sed -i "s|^DB_PORT=.*|DB_PORT=$DB_PORT|" "$APP_DIR/.env"
+            sudo -u "$APP_USER" sed -i "s|^DB_NAME=.*|DB_NAME=$DB_NAME|" "$APP_DIR/.env"
+            sudo -u "$APP_USER" sed -i "s|^DB_USER=.*|DB_USER=$DB_USER|" "$APP_DIR/.env"
+            sudo -u "$APP_USER" sed -i "s|^DB_PASSWORD=.*|DB_PASSWORD=$DB_PASSWORD|" "$APP_DIR/.env"
+            
+            log_info "Database configuration updated in .env"
+        else
+            log_warn "Database configuration file not found"
+            log_warn "Please update .env manually with database credentials"
+        fi
+        
+        log_warn "IMPORTANT: Update .env with your API keys and configuration"
+        log_warn "Required: OPENAI_API_KEY, BINANCE_API_KEY, SMS credentials"
+    else
+        log_info ".env file already exists"
+    fi
+    
+    # Set proper permissions
     chown "$APP_USER:$APP_USER" "$APP_DIR/.env"
     chmod 600 "$APP_DIR/.env"
     
-    log "Environment file configured"
+    log "Environment configuration completed"
 }
 
-# Generate self-signed SSL certificate
-generate_ssl_certificate() {
-    log "Generating self-signed SSL certificate..."
+# Run database migrations
+run_database_migrations() {
+    log "Running database migrations..."
     
-    # Create SSL directories if they don't exist
-    mkdir -p "$SSL_CERT_DIR"
-    mkdir -p "$SSL_KEY_DIR"
-    
-    # Certificate details
-    DOMAIN="crypto-ai.crypto-vision.com"
-    CERT_FILE="$SSL_CERT_DIR/crypto-ai-cert.pem"
-    KEY_FILE="$SSL_KEY_DIR/crypto-ai-key.pem"
-    
-    # Check if certificate already exists
-    if [[ -f "$CERT_FILE" && -f "$KEY_FILE" ]]; then
-        log_info "SSL certificate already exists, skipping generation"
-        return
+    # Check if alembic is configured
+    if [[ -f "$APP_DIR/alembic.ini" ]]; then
+        log_info "Running Alembic migrations..."
+        cd "$APP_DIR"
+        sudo -u "$APP_USER" "$VENV_DIR/bin/alembic" upgrade head
+        log "Database migrations completed"
+    else
+        log_warn "Alembic not configured, running init_database.py instead"
+        if [[ -f "$APP_DIR/scripts/init_database.py" ]]; then
+            cd "$APP_DIR"
+            sudo -u "$APP_USER" "$VENV_DIR/bin/python" scripts/init_database.py
+            log "Database initialized"
+        else
+            log_warn "No database initialization script found"
+            log_warn "Database schema may need to be created manually"
+        fi
     fi
-    
-    # Generate self-signed certificate (valid for 365 days)
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$KEY_FILE" \
-        -out "$CERT_FILE" \
-        -subj "/C=US/ST=State/L=City/O=Organization/CN=$DOMAIN" \
-        -addext "subjectAltName=DNS:$DOMAIN,DNS:www.$DOMAIN"
-    
-    # Set permissions
-    chmod 644 "$CERT_FILE"
-    chmod 600 "$KEY_FILE"
-    
-    log "SSL certificate generated at $CERT_FILE"
-    log_warn "This is a self-signed certificate. For production, use a certificate from a trusted CA."
 }
 
-# Configure Nginx
-configure_nginx() {
-    log "Configuring Nginx..."
+# Generate SSL certificates
+generate_ssl_certificates() {
+    log "Generating SSL certificates..."
     
-    # Backup existing configuration
-    if [[ -f "$NGINX_CONF_DIR/nginx.conf" ]]; then
-        cp "$NGINX_CONF_DIR/nginx.conf" "$NGINX_CONF_DIR/nginx.conf.backup.$(date +%Y%m%d%H%M%S)"
+    # Create certificate directory
+    mkdir -p "$CERT_DIR"
+    chown "$APP_USER:$APP_USER" "$CERT_DIR"
+    chmod 755 "$CERT_DIR"
+    
+    # Generate self-signed certificate for AWS environment
+    if [[ ! -f "$CERT_DIR/server.crt" || ! -f "$CERT_DIR/server.key" ]]; then
+        log_info "Generating self-signed SSL certificate..."
+        
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout "$CERT_DIR/server.key" \
+            -out "$CERT_DIR/server.crt" \
+            -subj "/C=US/ST=State/L=City/O=CryptoSaaS/CN=crypto-ai.crypto-vision.com"
+        
+        # Set permissions
+        chown "$APP_USER:$APP_USER" "$CERT_DIR/server.key" "$CERT_DIR/server.crt"
+        chmod 600 "$CERT_DIR/server.key"
+        chmod 644 "$CERT_DIR/server.crt"
+        
+        log "SSL certificates generated"
+    else
+        log_info "SSL certificates already exist"
     fi
-    
-    # Create Nginx configuration for the application
-    cat > "$NGINX_CONF_DIR/conf.d/crypto-saas.conf" << 'EOF'
-# Crypto Market Analysis SaaS Nginx Configuration
-
-# Upstream for Flask API
-upstream flask_api {
-    server 127.0.0.1:5000;
-    keepalive 32;
-}
-
-# Upstream for Streamlit Dashboard
-upstream streamlit_dashboard {
-    server 127.0.0.1:8501;
-    keepalive 32;
-}
-
-# HTTP to HTTPS redirect
-server {
-    listen 80;
-    server_name crypto-ai.crypto-vision.com;
-    
-    # Redirect all HTTP to HTTPS
-    return 301 https://$server_name$request_uri;
-}
-
-# HTTPS server
-server {
-    listen 443 ssl http2;
-    server_name crypto-ai.crypto-vision.com;
-    
-    # SSL configuration
-    ssl_certificate /etc/ssl/certs/crypto-ai-cert.pem;
-    ssl_certificate_key /etc/ssl/private/crypto-ai-key.pem;
-    
-    # SSL security settings
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-    
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    
-    # Logging
-    access_log /var/log/nginx/crypto-saas-access.log;
-    error_log /var/log/nginx/crypto-saas-error.log;
-    
-    # Max upload size
-    client_max_body_size 10M;
-    
-    # API endpoints
-    location /api/ {
-        proxy_pass http://flask_api;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-        
-        # Timeouts
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
-    }
-    
-    # Chat interface
-    location /chat {
-        proxy_pass http://flask_api;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
-    
-    # Streamlit dashboard
-    location / {
-        proxy_pass http://streamlit_dashboard;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-        
-        # WebSocket support for Streamlit
-        proxy_buffering off;
-        proxy_read_timeout 86400;
-    }
-    
-    # Streamlit WebSocket endpoint
-    location /_stcore/stream {
-        proxy_pass http://streamlit_dashboard/_stcore/stream;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_buffering off;
-        proxy_read_timeout 86400;
-    }
-    
-    # Health check endpoint
-    location /health {
-        proxy_pass http://flask_api/health;
-        access_log off;
-    }
-}
-EOF
-    
-    # Test Nginx configuration
-    nginx -t
-    
-    log "Nginx configured successfully"
 }
 
 # Create systemd service for Flask API
 create_flask_service() {
-    log "Creating systemd service for Flask API..."
+    log "Creating Flask API systemd service..."
     
     cat > "$SYSTEMD_DIR/crypto-saas-api.service" << EOF
 [Unit]
 Description=Crypto Market Analysis SaaS - Flask API
-After=network.target postgresql.service
-Wants=postgresql.service
+After=network.target postgresql-crypto.service
+Wants=postgresql-crypto.service
 
 [Service]
 Type=simple
@@ -298,18 +240,20 @@ Group=$APP_USER
 WorkingDirectory=$APP_DIR
 Environment="PATH=$VENV_DIR/bin"
 EnvironmentFile=$APP_DIR/.env
-ExecStart=$VENV_DIR/bin/python $APP_DIR/run_api.py
+ExecStart=$VENV_DIR/bin/python run_api.py
 Restart=always
 RestartSec=10
+
+# Logging
 StandardOutput=append:$LOG_DIR/api.log
 StandardError=append:$LOG_DIR/api-error.log
 
 # Security settings
-NoNewPrivileges=true
-PrivateTmp=true
+NoNewPrivileges=yes
+PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=$LOG_DIR $APP_DIR/models $APP_DIR/data
+ReadWritePaths=$LOG_DIR $APP_DIR/models
+ProtectHome=yes
 
 # Resource limits
 LimitNOFILE=65536
@@ -324,7 +268,7 @@ EOF
 
 # Create systemd service for Streamlit Dashboard
 create_streamlit_service() {
-    log "Creating systemd service for Streamlit Dashboard..."
+    log "Creating Streamlit Dashboard systemd service..."
     
     cat > "$SYSTEMD_DIR/crypto-saas-dashboard.service" << EOF
 [Unit]
@@ -339,18 +283,20 @@ Group=$APP_USER
 WorkingDirectory=$APP_DIR
 Environment="PATH=$VENV_DIR/bin"
 EnvironmentFile=$APP_DIR/.env
-ExecStart=$VENV_DIR/bin/streamlit run $APP_DIR/dashboard.py --server.port=8501 --server.address=127.0.0.1 --server.headless=true
+ExecStart=$VENV_DIR/bin/streamlit run dashboard.py --server.port=$STREAMLIT_PORT --server.address=0.0.0.0 --server.headless=true
 Restart=always
 RestartSec=10
+
+# Logging
 StandardOutput=append:$LOG_DIR/dashboard.log
 StandardError=append:$LOG_DIR/dashboard-error.log
 
 # Security settings
-NoNewPrivileges=true
-PrivateTmp=true
+NoNewPrivileges=yes
+PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=$LOG_DIR $APP_DIR/models $APP_DIR/data
+ReadWritePaths=$LOG_DIR
+ProtectHome=yes
 
 # Resource limits
 LimitNOFILE=65536
@@ -365,13 +311,13 @@ EOF
 
 # Create systemd service for Data Collector
 create_collector_service() {
-    log "Creating systemd service for Data Collector..."
+    log "Creating Data Collector systemd service..."
     
     cat > "$SYSTEMD_DIR/crypto-saas-collector.service" << EOF
 [Unit]
 Description=Crypto Market Analysis SaaS - Data Collector
-After=network.target postgresql.service
-Wants=postgresql.service
+After=network.target postgresql-crypto.service
+Wants=postgresql-crypto.service
 
 [Service]
 Type=simple
@@ -380,18 +326,20 @@ Group=$APP_USER
 WorkingDirectory=$APP_DIR
 Environment="PATH=$VENV_DIR/bin"
 EnvironmentFile=$APP_DIR/.env
-ExecStart=$VENV_DIR/bin/python -m src.collector.scheduler
+ExecStart=$VENV_DIR/bin/python -m src.collectors.scheduler
 Restart=always
 RestartSec=10
+
+# Logging
 StandardOutput=append:$LOG_DIR/collector.log
 StandardError=append:$LOG_DIR/collector-error.log
 
 # Security settings
-NoNewPrivileges=true
-PrivateTmp=true
+NoNewPrivileges=yes
+PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=$LOG_DIR $APP_DIR/data
+ReadWritePaths=$LOG_DIR
+ProtectHome=yes
 
 # Resource limits
 LimitNOFILE=65536
@@ -406,13 +354,13 @@ EOF
 
 # Create systemd service for Alert System
 create_alert_service() {
-    log "Creating systemd service for Alert System..."
+    log "Creating Alert System systemd service..."
     
     cat > "$SYSTEMD_DIR/crypto-saas-alerts.service" << EOF
 [Unit]
 Description=Crypto Market Analysis SaaS - Alert System
-After=network.target postgresql.service crypto-saas-api.service
-Wants=postgresql.service crypto-saas-api.service
+After=network.target postgresql-crypto.service
+Wants=postgresql-crypto.service
 
 [Service]
 Type=simple
@@ -424,15 +372,17 @@ EnvironmentFile=$APP_DIR/.env
 ExecStart=$VENV_DIR/bin/python -m src.alerts.scheduler
 Restart=always
 RestartSec=10
+
+# Logging
 StandardOutput=append:$LOG_DIR/alerts.log
 StandardError=append:$LOG_DIR/alerts-error.log
 
 # Security settings
-NoNewPrivileges=true
-PrivateTmp=true
+NoNewPrivileges=yes
+PrivateTmp=yes
 ProtectSystem=strict
-ProtectHome=true
 ReadWritePaths=$LOG_DIR
+ProtectHome=yes
 
 # Resource limits
 LimitNOFILE=65536
@@ -445,44 +395,231 @@ EOF
     log "Alert System service created"
 }
 
-# Initialize database
-initialize_database() {
-    log "Initializing database..."
+# Configure Nginx as reverse proxy
+configure_nginx() {
+    log "Configuring Nginx as reverse proxy..."
     
-    # Check if database is accessible
-    if ! su - "$APP_USER" -c "PGPASSWORD=\$(grep DATABASE_URL $APP_DIR/.env | cut -d: -f3 | cut -d@ -f1) psql -h localhost -U crypto_user -d crypto_db -c 'SELECT 1' >/dev/null 2>&1"; then
-        log_error "Cannot connect to database. Please ensure PostgreSQL is running and configured."
+    # Backup existing nginx configuration
+    if [[ -f "$NGINX_CONF_DIR/nginx.conf" ]]; then
+        cp "$NGINX_CONF_DIR/nginx.conf" "$NGINX_CONF_DIR/nginx.conf.backup"
+    fi
+    
+    # Create Nginx configuration for the application
+    cat > "$NGINX_CONF_DIR/sites-available/crypto-saas" << EOF
+# Crypto Market Analysis SaaS Nginx Configuration
+
+# Upstream for Flask API
+upstream flask_api {
+    server 127.0.0.1:$FLASK_PORT;
+}
+
+# Upstream for Streamlit Dashboard
+upstream streamlit_dashboard {
+    server 127.0.0.1:$STREAMLIT_PORT;
+}
+
+# HTTP server - redirect to HTTPS
+server {
+    listen 80;
+    server_name crypto-ai.crypto-vision.com www.crypto-vision.com;
+    
+    # Redirect all HTTP to HTTPS
+    return 301 https://\$host\$request_uri;
+}
+
+# HTTPS server for Chat Interface and API
+server {
+    listen $HTTPS_PORT ssl http2;
+    server_name crypto-ai.crypto-vision.com;
+    
+    # SSL Configuration
+    ssl_certificate $CERT_DIR/server.crt;
+    ssl_certificate_key $CERT_DIR/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    
+    # Logging
+    access_log $LOG_DIR/nginx-access.log;
+    error_log $LOG_DIR/nginx-error.log;
+    
+    # Max upload size
+    client_max_body_size 10M;
+    
+    # Root location - serve static landing page
+    location / {
+        root $APP_DIR/static;
+        index index.html;
+        try_files \$uri \$uri/ =404;
+    }
+    
+    # API endpoints
+    location /api/ {
+        proxy_pass http://flask_api;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+    
+    # Chat interface
+    location /chat {
+        proxy_pass http://flask_api/chat;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    
+    # Static files
+    location /static/ {
+        alias $APP_DIR/static/;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+}
+
+# HTTP server for Streamlit Dashboard
+server {
+    listen 8501;
+    server_name crypto-ai.crypto-vision.com www.crypto-vision.com;
+    
+    # Logging
+    access_log $LOG_DIR/nginx-streamlit-access.log;
+    error_log $LOG_DIR/nginx-streamlit-error.log;
+    
+    location / {
+        proxy_pass http://streamlit_dashboard;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # WebSocket support for Streamlit
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # Timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+    
+    location /_stcore/stream {
+        proxy_pass http://streamlit_dashboard/_stcore/stream;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+    
+    # Create sites-enabled directory if it doesn't exist
+    mkdir -p "$NGINX_CONF_DIR/sites-enabled"
+    
+    # Enable the site
+    ln -sf "$NGINX_CONF_DIR/sites-available/crypto-saas" "$NGINX_CONF_DIR/sites-enabled/crypto-saas"
+    
+    # Remove default site if it exists
+    rm -f "$NGINX_CONF_DIR/sites-enabled/default"
+    
+    # Test Nginx configuration
+    if nginx -t; then
+        log "Nginx configuration is valid"
+    else
+        log_error "Nginx configuration test failed"
         exit 1
     fi
     
-    # Run database migrations
-    log "Running database migrations..."
-    su - "$APP_USER" -c "cd $APP_DIR && $VENV_DIR/bin/alembic upgrade head"
-    
-    log "Database initialized successfully"
+    log "Nginx configured successfully"
 }
 
-# Create application directories
-create_app_directories() {
-    log "Creating application directories..."
+# Create static landing page
+create_landing_page() {
+    log "Creating static landing page..."
     
-    # Create necessary directories
-    mkdir -p "$APP_DIR/models"
-    mkdir -p "$APP_DIR/data"
-    mkdir -p "$APP_DIR/certs"
-    mkdir -p "$LOG_DIR"
+    # Create static directory
+    mkdir -p "$APP_DIR/static"
+    chown "$APP_USER:$APP_USER" "$APP_DIR/static"
     
-    # Set ownership
-    chown -R "$APP_USER:$APP_USER" "$APP_DIR"
-    chown -R "$APP_USER:$APP_USER" "$LOG_DIR"
+    # Create simple landing page
+    cat > "$APP_DIR/static/index.html" << 'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Market Analysis SaaS</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .landing-container {
+            background: white;
+            border-radius: 20px;
+            padding: 50px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+        }
+        .btn-custom {
+            padding: 15px 40px;
+            font-size: 18px;
+            margin: 10px;
+            border-radius: 50px;
+        }
+        h1 {
+            color: #667eea;
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="landing-container text-center">
+        <h1>🚀 Crypto Market Analysis</h1>
+        <p class="lead">AI-Powered Cryptocurrency Market Predictions</p>
+        <p class="text-muted">Access our powerful tools for cryptocurrency market analysis and predictions</p>
+        
+        <div class="mt-5">
+            <a href="http://crypto-ai.crypto-vision.com:8501" class="btn btn-primary btn-custom">
+                📊 View Dashboard
+            </a>
+            <a href="/chat" class="btn btn-success btn-custom">
+                💬 Chat Assistant
+            </a>
+        </div>
+        
+        <div class="mt-5">
+            <small class="text-muted">
+                Powered by LSTM Neural Networks & OpenAI
+            </small>
+        </div>
+    </div>
+</body>
+</html>
+EOF
     
-    # Set permissions
-    chmod 755 "$APP_DIR/models"
-    chmod 755 "$APP_DIR/data"
-    chmod 700 "$APP_DIR/certs"
-    chmod 755 "$LOG_DIR"
+    chown "$APP_USER:$APP_USER" "$APP_DIR/static/index.html"
     
-    log "Application directories created"
+    log "Landing page created"
 }
 
 # Enable and reload systemd services
@@ -502,93 +639,183 @@ enable_services() {
     log "Services enabled"
 }
 
-# Verify setup
+# Create health check script
+create_health_check() {
+    log "Creating health check script..."
+    
+    cat > /usr/local/bin/crypto-saas-health-check.sh << 'EOF'
+#!/bin/bash
+# Health check script for Crypto Market Analysis SaaS
+
+set -euo pipefail
+
+LOG_FILE="/var/log/crypto-saas/health-check.log"
+
+# Function to log with timestamp
+log_health() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+}
+
+# Check Flask API
+if systemctl is-active --quiet crypto-saas-api.service; then
+    if curl -sf http://localhost:5000/api/health >/dev/null 2>&1; then
+        log_health "INFO: Flask API is healthy"
+    else
+        log_health "WARNING: Flask API service running but not responding"
+    fi
+else
+    log_health "ERROR: Flask API service is not running"
+fi
+
+# Check Streamlit Dashboard
+if systemctl is-active --quiet crypto-saas-dashboard.service; then
+    log_health "INFO: Streamlit Dashboard is running"
+else
+    log_health "ERROR: Streamlit Dashboard service is not running"
+fi
+
+# Check Data Collector
+if systemctl is-active --quiet crypto-saas-collector.service; then
+    log_health "INFO: Data Collector is running"
+else
+    log_health "ERROR: Data Collector service is not running"
+fi
+
+# Check Alert System
+if systemctl is-active --quiet crypto-saas-alerts.service; then
+    log_health "INFO: Alert System is running"
+else
+    log_health "ERROR: Alert System service is not running"
+fi
+
+# Check Nginx
+if systemctl is-active --quiet nginx.service; then
+    log_health "INFO: Nginx is running"
+else
+    log_health "ERROR: Nginx service is not running"
+fi
+
+# Check disk space
+DISK_USAGE=$(df /opt | awk 'NR==2 {print $5}' | sed 's/%//')
+if [[ $DISK_USAGE -gt 90 ]]; then
+    log_health "WARNING: Disk usage is ${DISK_USAGE}%"
+fi
+
+log_health "INFO: Health check completed"
+EOF
+    
+    chmod +x /usr/local/bin/crypto-saas-health-check.sh
+    
+    # Create cron job for health checks
+    cat > /etc/cron.d/crypto-saas-health-check << EOF
+# Crypto SaaS health check every 5 minutes
+*/5 * * * * root /usr/local/bin/crypto-saas-health-check.sh
+EOF
+    
+    log "Health check script created"
+}
+
+# Verify application setup
 verify_setup() {
-    log "Verifying setup..."
+    log "Verifying application setup..."
     
     # Check virtual environment
-    if [[ -d "$VENV_DIR" ]]; then
+    if [[ -d "$VENV_DIR" && -f "$VENV_DIR/bin/python" ]]; then
         log_info "✓ Virtual environment exists"
     else
         log_error "✗ Virtual environment not found"
         exit 1
     fi
     
-    # Check environment file
+    # Check .env file
     if [[ -f "$APP_DIR/.env" ]]; then
-        log_info "✓ Environment file exists"
+        log_info "✓ Environment configuration exists"
     else
-        log_error "✗ Environment file not found"
+        log_error "✗ .env file not found"
         exit 1
     fi
     
-    # Check SSL certificate
-    if [[ -f "$SSL_CERT_DIR/crypto-ai-cert.pem" && -f "$SSL_KEY_DIR/crypto-ai-key.pem" ]]; then
-        log_info "✓ SSL certificate exists"
+    # Check SSL certificates
+    if [[ -f "$CERT_DIR/server.crt" && -f "$CERT_DIR/server.key" ]]; then
+        log_info "✓ SSL certificates exist"
     else
-        log_error "✗ SSL certificate not found"
-        exit 1
-    fi
-    
-    # Check Nginx configuration
-    if nginx -t >/dev/null 2>&1; then
-        log_info "✓ Nginx configuration valid"
-    else
-        log_error "✗ Nginx configuration invalid"
+        log_error "✗ SSL certificates not found"
         exit 1
     fi
     
     # Check systemd services
     local services=("crypto-saas-api" "crypto-saas-dashboard" "crypto-saas-collector" "crypto-saas-alerts")
     for service in "${services[@]}"; do
-        if systemctl is-enabled "$service.service" >/dev/null 2>&1; then
-            log_info "✓ Service $service enabled"
+        if [[ -f "$SYSTEMD_DIR/${service}.service" ]]; then
+            log_info "✓ Service ${service} configured"
         else
-            log_error "✗ Service $service not enabled"
+            log_error "✗ Service ${service} not found"
             exit 1
         fi
     done
     
-    log "Setup verification completed"
+    # Check Nginx configuration
+    if [[ -f "$NGINX_CONF_DIR/sites-available/crypto-saas" ]]; then
+        log_info "✓ Nginx configuration exists"
+    else
+        log_error "✗ Nginx configuration not found"
+        exit 1
+    fi
+    
+    log "Application setup verification completed"
 }
 
 # Print setup summary
 print_summary() {
     log "Application setup completed successfully!"
     echo
-    log_info "Setup Summary:"
-    echo "  Virtual environment: $VENV_DIR"
-    echo "  Environment file: $APP_DIR/.env"
-    echo "  SSL certificate: $SSL_CERT_DIR/crypto-ai-cert.pem"
-    echo "  Nginx configuration: $NGINX_CONF_DIR/conf.d/crypto-saas.conf"
+    log_info "Application Configuration:"
+    echo "  Application Directory: $APP_DIR"
+    echo "  Virtual Environment: $VENV_DIR"
+    echo "  Log Directory: $LOG_DIR"
+    echo "  Configuration Directory: $CONFIG_DIR"
+    echo "  SSL Certificates: $CERT_DIR"
     echo
-    log_info "Systemd services created:"
-    echo "  - crypto-saas-api.service (Flask API)"
-    echo "  - crypto-saas-dashboard.service (Streamlit Dashboard)"
+    log_info "Services Created:"
+    echo "  - crypto-saas-api.service (Flask API on port $FLASK_PORT)"
+    echo "  - crypto-saas-dashboard.service (Streamlit on port $STREAMLIT_PORT)"
     echo "  - crypto-saas-collector.service (Data Collector)"
     echo "  - crypto-saas-alerts.service (Alert System)"
+    echo "  - nginx.service (Reverse Proxy on port $HTTPS_PORT)"
     echo
-    log_warn "IMPORTANT: Before starting services:"
-    echo "1. Edit $APP_DIR/.env with actual configuration values"
-    echo "2. Ensure PostgreSQL is running and accessible"
-    echo "3. Verify database connection settings"
+    log_info "Access URLs:"
+    echo "  Landing Page: https://crypto-ai.crypto-vision.com:$HTTPS_PORT"
+    echo "  Dashboard: http://crypto-ai.crypto-vision.com:$STREAMLIT_PORT"
+    echo "  Chat Interface: https://crypto-ai.crypto-vision.com:$HTTPS_PORT/chat"
+    echo "  API: https://crypto-ai.crypto-vision.com:$HTTPS_PORT/api/"
     echo
-    log_info "To start all services:"
-    echo "  sudo systemctl start crypto-saas-api"
-    echo "  sudo systemctl start crypto-saas-dashboard"
-    echo "  sudo systemctl start crypto-saas-collector"
-    echo "  sudo systemctl start crypto-saas-alerts"
-    echo "  sudo systemctl start nginx"
+    log_info "Next Steps:"
+    echo "1. Update $APP_DIR/.env with your API keys:"
+    echo "   - OPENAI_API_KEY"
+    echo "   - BINANCE_API_KEY (if required)"
+    echo "   - SMS provider credentials (Twilio or AWS SNS)"
     echo
-    log_info "Or use the start-services.sh script:"
-    echo "  sudo $APP_DIR/remote-scripts/start-services.sh"
+    echo "2. Start services:"
+    echo "   sudo systemctl start crypto-saas-api"
+    echo "   sudo systemctl start crypto-saas-dashboard"
+    echo "   sudo systemctl start crypto-saas-collector"
+    echo "   sudo systemctl start crypto-saas-alerts"
+    echo "   sudo systemctl start nginx"
     echo
-    log_info "To check service status:"
-    echo "  sudo systemctl status crypto-saas-*"
+    echo "3. Or use the start-services.sh script:"
+    echo "   sudo /opt/crypto-saas/remote-scripts/start-services.sh"
     echo
-    log_info "To view logs:"
-    echo "  sudo journalctl -u crypto-saas-api -f"
-    echo "  sudo tail -f $LOG_DIR/api.log"
+    echo "4. Check service status:"
+    echo "   sudo systemctl status crypto-saas-*"
+    echo
+    echo "5. View logs:"
+    echo "   tail -f $LOG_DIR/*.log"
+    echo
+    log_warn "Important Security Notes:"
+    echo "  - Update .env file with production API keys"
+    echo "  - SSL certificates are self-signed (consider Let's Encrypt for production)"
+    echo "  - Ensure Security Group allows traffic on ports 22, 443, 8501, and $HTTPS_PORT"
+    echo "  - Review and update Nginx security headers as needed"
 }
 
 # Main execution
@@ -598,23 +825,23 @@ main() {
     # Check if running as root
     check_root
     
-    # Create application directories
-    create_app_directories
+    # Verify prerequisites
+    verify_prerequisites
     
     # Create Python virtual environment
-    create_virtualenv
+    create_virtual_environment
     
     # Install Python dependencies
     install_python_dependencies
     
-    # Configure environment file
+    # Configure environment variables
     configure_environment
     
-    # Generate SSL certificate
-    generate_ssl_certificate
+    # Run database migrations
+    run_database_migrations
     
-    # Configure Nginx
-    configure_nginx
+    # Generate SSL certificates
+    generate_ssl_certificates
     
     # Create systemd services
     create_flask_service
@@ -622,11 +849,17 @@ main() {
     create_collector_service
     create_alert_service
     
-    # Initialize database
-    initialize_database
+    # Configure Nginx
+    configure_nginx
+    
+    # Create landing page
+    create_landing_page
     
     # Enable services
     enable_services
+    
+    # Create health check
+    create_health_check
     
     # Verify setup
     verify_setup

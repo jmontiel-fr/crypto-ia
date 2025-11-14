@@ -14,6 +14,9 @@ from src.config.secrets_manager import get_secrets_manager
 
 logger = logging.getLogger(__name__)
 
+# Flag to control whether to run full validation
+RUN_FULL_VALIDATION = os.getenv('RUN_CONFIG_VALIDATION', 'true').lower() in ('true', '1', 'yes')
+
 
 @dataclass
 class Config:
@@ -21,6 +24,7 @@ class Config:
     
     # Environment
     environment: str
+    environment_path: Optional[str]
     
     # Database
     database_url: str
@@ -167,6 +171,7 @@ def load_config(env_file: Optional[str] = None, use_secrets_manager: bool = True
         config = Config(
             # Environment
             environment=get_optional('ENVIRONMENT', 'local'),
+            environment_path=get_optional('ENVIRONMENT_PATH'),
             
             # Database
             database_url=get_required('DATABASE_URL'),
@@ -235,6 +240,28 @@ def load_config(env_file: Optional[str] = None, use_secrets_manager: bool = True
         
         # Validate configuration
         _validate_config(config)
+        
+        # Run full validation if enabled
+        if RUN_FULL_VALIDATION:
+            try:
+                from src.config.validator import EnvironmentValidator
+                validator = EnvironmentValidator(config.environment)
+                is_valid, errors, warnings = validator.validate_all()
+                
+                if errors:
+                    logger.error("Configuration validation errors:")
+                    for error in errors:
+                        logger.error(f"  - {error}")
+                    raise ValueError("Configuration validation failed. See logs for details.")
+                
+                if warnings:
+                    logger.warning("Configuration validation warnings:")
+                    for warning in warnings:
+                        logger.warning(f"  - {warning}")
+                
+                logger.info("Full configuration validation passed")
+            except ImportError:
+                logger.warning("Configuration validator not available. Skipping full validation.")
         
         return config
         

@@ -36,9 +36,23 @@ def init_db(config: Config) -> None:
     global _engine, _SessionFactory
     
     try:
+        # Resolve database URL for SQLite with environment path
+        database_url = config.database_url
+        if database_url.startswith('sqlite:///') and config.environment_path:
+            # Extract the relative path from SQLite URL
+            db_path = database_url.replace('sqlite:///', '')
+            if db_path.startswith('./'):
+                db_path = db_path[2:]  # Remove './'
+            
+            # Construct absolute path using environment path
+            from pathlib import Path
+            abs_db_path = Path(config.environment_path) / db_path
+            database_url = f'sqlite:///{abs_db_path}'
+            logger.info(f"Resolved SQLite database path: {abs_db_path}")
+        
         # Create engine with connection pooling
         _engine = create_engine(
-            config.database_url,
+            database_url,
             poolclass=pool.QueuePool,
             pool_size=config.db_pool_size,
             max_overflow=config.db_max_overflow,
